@@ -1,0 +1,14 @@
+{
+  "Entertainment": {
+    "Music": ["Spotify", "YouTube Music"],
+    "Video": ["YouTube", "Netflix", "Disney+", "Prime Video", "Twitch"]
+  },
+  "Social Media": {
+    "Feeds": ["Instagram", "Facebook", "TikTok", "X (Twitter)"],
+    "Forums": ["Reddit"]
+  },
+  "Study": {
+    "Coursework": ["Canvas LMS", "University Portal"],
+    "Courses": ["Coursera", "Khan Academy"]
+  }
+}

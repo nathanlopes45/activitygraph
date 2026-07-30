@@ -1,0 +1,47 @@
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python bytecode / build artefacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+build/
+dist/
+.eggs/
+
+# Test and tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local data. History databases contain a record of everything the network
+# did -- never commit them.
+*.db
+*.sqlite
+*.sqlite3
+
+# Local configuration that identifies your network or holds secrets.
+# router credentials are a plaintext password; device names and groupings
+# are personal. Keep templates (*.example.json) tracked instead.
+router.json
+router-credentials.json
+credentials.json
+devices.json
+groups.json
+aliases.json
+taxonomy.json
+llm_cache.json
+*.leases
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

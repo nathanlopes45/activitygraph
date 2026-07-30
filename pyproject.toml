@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "activitygraph"
+version = "0.1.0"
+description = "Local-first network activity analysis: turns your own traffic into per-person, per-category time"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+keywords = ["network", "monitoring", "privacy", "self-hosted", "digital-wellbeing"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: System :: Networking :: Monitoring",
+]
+dependencies = [
+    "scapy>=2.5.0",
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.29.0",
+]
+
+[project.optional-dependencies]
+# Only needed for --router-devices, which logs into a TP-Link admin interface.
+# Not required on a gateway deployment, where --dhcp-leases supersedes it.
+router = ["tplinkrouterc6u>=5.0"]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+activitygraph = "activitygraph.main:main"
+
+[project.urls]
+Documentation = "https://github.com/nathanlopes45/activitygraph#readme"
+Source = "https://github.com/nathanlopes45/activitygraph"
+
+[tool.setuptools.packages.find]
+include = ["activitygraph*"]
+
+[tool.setuptools.package-data]
+# The dashboard is served from disk at runtime, so it must ship with the package.
+activitygraph = ["webapp/*.html"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
