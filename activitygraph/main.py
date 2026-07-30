@@ -1,0 +1,409 @@
+"""ActivityGraph backend core CLI.
+
+    Network -> Traffic Collector -> Flow Processor -> Service Detection -> [Devices]
+
+Two modes:
+  --demo            Run against a synthetic packet stream (no root needed).
+  --live -i <iface>  Capture real traffic (needs root / CAP_NET_RAW).
+
+This is the "backend core" slice: capture, device identification, and
+service-tagged flows. The AI Classification / Activity Graph / Dashboard
+stages build on top of the Flow + Device objects produced here.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+from .activity_graph import Session, group_into_sessions
+from .analytics import rank_categories, rank_devices, rank_services
+from .collector import TrafficCollector, warn_if_capturing_wan
+from .device_groups import GroupRegistry, load_device_groups
+from .device_id import DeviceRegistry, load_aliases
+from .demo_source import generate as generate_demo_packets
+from .flow_processor import FlowProcessor
+from .llm_classifier import LocalLLMClassifier
+from .models import Packet
+from .service_detector import ServiceDetector
+from .taxonomy import TaxonomyRegistry, load_taxonomy
+from .time_analytics import (
+    DEFAULT_MIN_ACTIVITY_SECONDS,
+    format_duration,
+    time_by_category_nested,
+    time_by_device,
+    time_by_group,
+    total_active_seconds,
+)
+
+
+class Pipeline:
+    def __init__(self, idle_timeout_seconds: float = 30.0, llm_classifier=None, session_gap_seconds: float = 300.0, device_aliases=None, active_resolve: bool = False, device_groups=None, min_activity_seconds: float = DEFAULT_MIN_ACTIVITY_SECONDS, taxonomy=None) -> None:
+        self.groups = GroupRegistry(device_groups)
+        self.taxonomy = TaxonomyRegistry(taxonomy)
+        self.devices = DeviceRegistry(aliases=device_aliases, active_resolve=active_resolve, groups=self.groups)
+        self.flows = FlowProcessor(idle_timeout_seconds=idle_timeout_seconds)
+        self.services = ServiceDetector(llm_classifier=llm_classifier)
+        self.session_gap_seconds = session_gap_seconds
+        self.min_activity_seconds = min_activity_seconds
+
+    def ingest(self, packet: Packet) -> None:
+        self.devices.observe(packet)
+        self.services.observe(packet)
+        if packet.proto in ("TCP", "UDP", "ICMP"):
+            self.flows.process(packet)
+
+    def finalize(self) -> None:
+        for flow in self.flows.flush_all():
+            self.services.apply(flow)
+        # Also tag any flows that were already closed earlier in a run.
+        for flow in self.flows.closed_flows():
+            if flow.service is None:
+                self.services.apply(flow)
+
+    def sessions(self) -> list[Session]:
+        local_ips = {d.ip for d in self.devices.all_devices()}
+        return group_into_sessions(self.flows.all_flows(), local_ips, session_gap_seconds=self.session_gap_seconds)
+
+    def summary(self) -> dict:
+        flows = self.flows.all_flows()
+        by_category: dict[str, dict] = {}
+        for f in flows:
+            cat = f.category or "Uncategorized"
+            bucket = by_category.setdefault(cat, {"flow_count": 0, "byte_count": 0, "services": set()})
+            bucket["flow_count"] += 1
+            bucket["byte_count"] += f.byte_count
+            if f.service:
+                bucket["services"].add(f.service)
+        for bucket in by_category.values():
+            bucket["services"] = sorted(bucket["services"])
+
+        devices = self.devices.all_devices()
+        local_ips = {d.ip for d in devices}
+
+        return {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "devices": [d.to_dict() for d in devices],
+            "flows": [f.to_dict() for f in flows],
+            "sessions": [s.to_dict() for s in self.sessions()],
+            "category_breakdown": by_category,
+            "ranked_devices": rank_devices(flows, devices),
+            "ranked_services": rank_services(flows),
+            "ranked_categories": rank_categories(flows),
+            "groups": [
+                {"name": name, "device_ips": [d.ip for d in members], "device_count": len(members)}
+                for name, members in sorted(self.groups.devices_by_group(devices).items())
+            ],
+            "time_totals": {
+                "min_activity_seconds": self.min_activity_seconds,
+                # Wall-clock time any categorized activity was happening.
+                # Categories are unioned independently, so the per-category
+                # figures can add up to more than this when a device is doing
+                # two things at once -- we can't know which had the user's
+                # attention, so both numbers are reported rather than one
+                # being invented.
+                "total_active_seconds": total_active_seconds(flows, local_ips, self.min_activity_seconds),
+                "by_category": time_by_category_nested(flows, local_ips, self.taxonomy, self.min_activity_seconds),
+                "by_group": time_by_group(flows, devices, self.min_activity_seconds),
+                "by_device": time_by_device(flows, devices, self.min_activity_seconds),
+            },
+        }
+
+
+def run_demo(idle_timeout: float, llm_classifier=None, session_gap_seconds: float = 300.0, device_aliases=None, active_resolve: bool = False, device_groups=None, min_activity_seconds: float = DEFAULT_MIN_ACTIVITY_SECONDS, taxonomy=None) -> Pipeline:
+    pipeline = Pipeline(idle_timeout_seconds=idle_timeout, llm_classifier=llm_classifier, session_gap_seconds=session_gap_seconds, device_aliases=device_aliases, active_resolve=active_resolve, device_groups=device_groups, min_activity_seconds=min_activity_seconds, taxonomy=taxonomy)
+    for packet in generate_demo_packets():
+        pipeline.ingest(packet)
+    pipeline.finalize()
+    return pipeline
+
+
+def run_live(interface: str | None, duration: float, idle_timeout: float, llm_classifier=None, session_gap_seconds: float = 300.0, device_aliases=None, active_resolve: bool = False, arp_sweep: bool = False, arp_sweep_subnet: str | None = None, arp_sweep_timeout: float = 3.0, router_devices: bool = False, router_credentials: str | None = None, device_groups=None, min_activity_seconds: float = DEFAULT_MIN_ACTIVITY_SECONDS, taxonomy=None, dhcp_leases: str | None = None) -> Pipeline:
+    pipeline = Pipeline(idle_timeout_seconds=idle_timeout, llm_classifier=llm_classifier, session_gap_seconds=session_gap_seconds, device_aliases=device_aliases, active_resolve=active_resolve, device_groups=device_groups, min_activity_seconds=min_activity_seconds, taxonomy=taxonomy)
+    collector = TrafficCollector(interface=interface)
+    warn_if_capturing_wan(interface)
+    if dhcp_leases is not None:
+        from .dhcp_leases import ingest_leases
+        ingest_leases(pipeline, dhcp_leases or None)
+    if router_devices:
+        from .router_client import ingest_router_devices
+        ingest_router_devices(pipeline, router_credentials)
+    if arp_sweep:
+        found = collector.arp_sweep_and_ingest(on_packet=pipeline.ingest, subnet=arp_sweep_subnet, timeout=arp_sweep_timeout)
+        print(f"[activitygraph] ARP sweep found {found} device(s).")
+    collector.run(on_packet=pipeline.ingest, timeout=duration)
+    pipeline.finalize()
+    return pipeline
+
+
+def _format_bytes(n: int) -> str:
+    if n == 0:
+        return "0 B"
+    units = ["B", "KB", "MB", "GB"]
+    i = 0
+    size = float(n)
+    while size >= 1024 and i < len(units) - 1:
+        size /= 1024
+        i += 1
+    return f"{size:.0f} {units[i]}" if i == 0 else f"{size:.1f} {units[i]}"
+
+
+def print_report(pipeline: Pipeline) -> None:
+    devices = pipeline.devices.all_devices()
+    flows = pipeline.flows.all_flows()
+    summary = pipeline.summary()
+
+    print("\n=== Devices ===")
+    for d in devices:
+        name = d.display_name()
+        suffix = "" if name == d.ip else f"  ({d.ip})"
+        print(f"  {name}{suffix}  {d.mac or '?'}")
+
+    print("\n=== Top Devices by Usage ===")
+    if not summary["ranked_devices"]:
+        print("  (no device traffic recorded)")
+    for r in summary["ranked_devices"][:10]:
+        print(f"  {r['display_name']:<24} {_format_bytes(r['byte_count']):>10}   {r['flow_count']} flows")
+
+    time_totals = summary["time_totals"]
+
+    print("\n=== Where Your Time Went ===")
+    if not time_totals["by_category"]:
+        print("  (no categorized activity yet)")
+    for r in time_totals["by_category"]:
+        print(f"  {r['category']:<24} {format_duration(r['seconds']):>10}")
+        for sub in r.get("subcategories", []):
+            print(f"    {sub['subcategory']:<22} {format_duration(sub['seconds']):>10}")
+            for svc in sub["services"]:
+                # Plain ASCII: this report gets piped and redirected, where
+                # Windows falls back to cp1252 and box-drawing chars raise.
+                print(f"        {svc['service']:<20} {format_duration(svc['seconds']):>10}")
+    if time_totals["by_category"]:
+        # Categories are unioned independently, so they can add up to more
+        # than the wall clock when a device does two things at once.
+        print(f"  {'-' * 24} {'-' * 10}")
+        print(f"  {'Active (wall clock)':<24} {format_duration(time_totals['total_active_seconds']):>10}")
+
+    print("\n=== Time by Person ===")
+    if not time_totals["by_group"]:
+        print("  (no devices grouped yet -- see --device-groups)")
+    for g in time_totals["by_group"]:
+        devices_note = f"{g['device_count']} device(s)"
+        print(f"\n  {g['group']}  {format_duration(g['seconds'])}  ({devices_note}, "
+              f"{format_duration(g['device_seconds'])} of device time)")
+        for c in g["by_category"]:
+            print(f"      {c['category']:<22} {format_duration(c['seconds']):>10}")
+
+    print("\n=== Activity Graph ===")
+    sessions_by_device: dict[str, list[Session]] = {}
+    for s in pipeline.sessions():
+        sessions_by_device.setdefault(s.device_ip, []).append(s)
+
+    if not sessions_by_device:
+        print("  (no sessions detected)")
+    for device_ip, sessions in sessions_by_device.items():
+        device = pipeline.devices.get(device_ip)
+        label = device.display_name() if device else device_ip
+        print(f"\n  {label} ({device_ip})")
+        for s in sessions:
+            time_range = f"{s.start_time.strftime('%H:%M')}\u2013{s.end_time.strftime('%H:%M')}"
+            print(f"  \u2514\u2500\u2500 {s.title}  [{time_range}, {s.byte_count:,}B]")
+            for i, svc in enumerate(s.services):
+                connector = "\u2514\u2500\u2500" if i == len(s.services) - 1 else "\u251c\u2500\u2500"
+                print(f"      {connector} {svc}")
+
+    print("\n=== Flows (top 20 by bytes) ===")
+    for f in sorted(flows, key=lambda x: -x.byte_count)[:20]:
+        label = f.service or "Unknown"
+        print(f"  {f.src_ip:<15} -> {f.dst_ip:<15}:{f.dst_port:<5} "
+              f"[{f.proto}] {f.byte_count:>8}B  {label} ({f.category})")
+
+    print("\n=== Top Services (ranked, most to least used) ===")
+    print("  This is where 'Uncategorized' gets segregated: each unrecognized")
+    print("  domain shows individually, so you can see exactly what to add a rule for.")
+    if not summary["ranked_services"]:
+        print("  (no services classified yet)")
+    for r in summary["ranked_services"][:15]:
+        print(f"  {r['service']:<40} {_format_bytes(r['byte_count']):>10}   {r['flow_count']:>3} flows   [{r['category']}]")
+
+    print("\n=== Category Breakdown ===")
+    for r in summary["ranked_categories"]:
+        cat = r["category"]
+        services = ", ".join(sorted(summary["category_breakdown"].get(cat, {}).get("services", []))) or "-"
+        print(f"  {cat:<20} {r['flow_count']:>3} flows  {_format_bytes(r['byte_count']):>10}   [{services}]")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="ActivityGraph backend core: capture -> devices + flows.")
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--demo", action="store_true", help="Run against synthetic demo traffic.")
+    mode.add_argument("--live", action="store_true", help="Capture live traffic (needs root).")
+    mode.add_argument("--list-interfaces", action="store_true", help="List available network interfaces.")
+    mode.add_argument("--serve", action="store_true", help="Launch the local web dashboard.")
+    parser.add_argument("-i", "--interface", default=None, help="Interface to capture on (live mode).")
+    parser.add_argument("-d", "--duration", type=float, default=30.0, help="Live capture duration, seconds.")
+    parser.add_argument("--idle-timeout", type=float, default=5.0, help="Flow idle timeout, seconds.")
+    parser.add_argument("--session-gap", type=float, default=300.0,
+                         help="Idle gap (seconds) that closes an activity session (default 300 = 5min).")
+    parser.add_argument("--json", action="store_true", help="Print JSON summary instead of a text report.")
+    parser.add_argument("-o", "--output", default=None, help="Write JSON summary to this file.")
+    parser.add_argument("--llm", action="store_true",
+                         help="Classify domains the rule engine misses using a local LLM (via Ollama).")
+    parser.add_argument("--llm-url", default="http://localhost:11434", help="Ollama-compatible API base URL.")
+    parser.add_argument("--llm-model", default="qwen2.5:1.5b", help="Model name, as pulled in Ollama.")
+    parser.add_argument("--llm-cache", default=None,
+                         help="Path to persist LLM classification cache (default: in-memory only).")
+    parser.add_argument("--serve-source", choices=["demo", "live"], default="demo",
+                         help="Data source for --serve: a one-shot demo snapshot, or continuous live capture.")
+    parser.add_argument("--host", default="127.0.0.1", help="Dashboard bind host (--serve mode).")
+    parser.add_argument("--port", type=int, default=8420, help="Dashboard port (--serve mode).")
+    parser.add_argument("--no-browser", action="store_true", help="Don't auto-open the dashboard in a browser.")
+    parser.add_argument("--history-db", default=None,
+                         help="Path to a SQLite file for tracking category trends across runs over time. "
+                              "For --demo/--live, records this run's totals. For --serve, reads trends to "
+                              "display (and records once, if --serve-source demo).")
+    parser.add_argument("--device-aliases", default=None,
+                         help="Path to a JSON file mapping MAC addresses to friendly device names, "
+                              "e.g. {\"AA:BB:CC:DD:EE:FF\": \"Alice's Laptop\"}. Always takes priority "
+                              "over passively-observed hostnames (mDNS/.local, NetBIOS, DHCP).")
+    parser.add_argument("--active-resolve", action="store_true",
+                         help="For devices with no alias/passive hostname yet, actively ask the device "
+                              "for its name (reverse DNS, unicast mDNS, NBSTAT) -- same idea as how your "
+                              "router resolves names, at the cost of a few extra packets per new device. "
+                              "Off by default to stay passive/unobtrusive.")
+    parser.add_argument("--device-groups", default=None,
+                         help="Path to a JSON file grouping devices by person, e.g. "
+                              "{\"Alice\": [\"AA:BB:CC:DD:EE:FF\", \"11:22:33:44:55:66\"]}. Lets the "
+                              "dashboard report time per person across all their devices instead of "
+                              "per IP. Devices not listed fall under \"Ungrouped\".")
+    parser.add_argument("--dhcp-leases", nargs="?", const="", default=None, metavar="PATH",
+                         help="Register every device from the DHCP server's lease table, including the "
+                              "hostname each one reported for itself. Use when running on a gateway that "
+                              "serves DHCP (see docs/raspberry-pi-gateway.md) -- works with any router, "
+                              "needs no credentials, and covers devices that never answer active probes. "
+                              "Pass with no value to probe the usual dnsmasq locations.")
+    parser.add_argument("--taxonomy", default=None,
+                         help="Path to a JSON file organizing services into subcategories within each "
+                              "category, e.g. {\"Entertainment\": {\"Music\": [\"Spotify\", \"YouTube "
+                              "Music\"], \"Video\": [\"YouTube\", \"Netflix\"]}}. A category you define "
+                              "replaces the built-in grouping for that category. Subcategories are "
+                              "derived at read time, so reorganizing regroups existing history too.")
+    parser.add_argument("--min-activity-seconds", type=float, default=DEFAULT_MIN_ACTIVITY_SECONDS,
+                         help="Minimum time credited to a flow when computing time-based totals "
+                              f"(default {DEFAULT_MIN_ACTIVITY_SECONDS:g}). A single-packet flow has zero "
+                              "duration, so without this a burst of short connections would register as "
+                              "no time at all.")
+    parser.add_argument("--arp-sweep", action="store_true",
+                         help="Before capturing, broadcast ARP requests across the local subnet so devices "
+                              "that never send traffic through this host (e.g. another Wi-Fi client, which "
+                              "a managed-mode adapter can't otherwise see) still show up in the device list. "
+                              "Only registers their presence (IP/MAC/vendor) -- it captures no traffic, so "
+                              "a device found only this way will show 0 bytes until it generates traffic "
+                              "that happens to cross this host. Live/serve-live modes only.")
+    parser.add_argument("--arp-sweep-subnet", default=None,
+                         help="CIDR to sweep, e.g. 192.168.1.0/24 (default: auto-detected /24 from the "
+                              "capture interface's own IP).")
+    parser.add_argument("--arp-sweep-timeout", type=float, default=3.0,
+                         help="Seconds to wait for ARP replies during --arp-sweep (default 3.0).")
+    parser.add_argument("--router-devices", action="store_true",
+                         help="Before capturing, log into your router's admin interface and pull its "
+                              "client list -- IP/MAC/hostname straight from its DHCP lease table, which "
+                              "covers devices that never answer --active-resolve or show up in --arp-sweep "
+                              "(e.g. phones). Requires --router-credentials. Live/serve-live modes only.")
+    parser.add_argument("--router-credentials", default=None,
+                         help="Path to a JSON file with your router login: "
+                              "{\"brand\": \"tplink\", \"host\": \"192.168.1.1\", \"username\": \"admin\", "
+                              "\"password\": \"...\"}. Kept in its own file (not a CLI argument) so the "
+                              "password never lands in shell history. Currently supported brands: tplink.")
+    args = parser.parse_args()
+
+    if args.arp_sweep and args.demo:
+        print("[activitygraph] Warning: --arp-sweep has no effect in --demo mode (no real interface to sweep).",
+              file=sys.stderr)
+    if args.router_devices and not args.router_credentials:
+        parser.error("--router-devices requires --router-credentials PATH")
+    if args.router_devices and args.demo:
+        print("[activitygraph] Warning: --router-devices has no effect in --demo mode.", file=sys.stderr)
+    if args.dhcp_leases is not None and args.demo:
+        print("[activitygraph] Warning: --dhcp-leases has no effect in --demo mode.", file=sys.stderr)
+
+    if args.list_interfaces:
+        for iface in TrafficCollector().list_interfaces():
+            print(iface)
+        return
+
+    llm_classifier = None
+    if args.llm:
+        llm_classifier = LocalLLMClassifier(base_url=args.llm_url, model=args.llm_model, cache_path=args.llm_cache)
+        if not llm_classifier.is_available():
+            print(
+                f"[activitygraph] Warning: no LLM reachable at {args.llm_url}. "
+                f"Continuing with rule-based classification only.",
+                file=sys.stderr,
+            )
+
+    device_aliases = load_aliases(args.device_aliases) if args.device_aliases else None
+    device_groups = load_device_groups(args.device_groups) if args.device_groups else None
+    taxonomy = load_taxonomy(args.taxonomy) if args.taxonomy else None
+
+    if args.demo:
+        pipeline = run_demo(idle_timeout=args.idle_timeout, llm_classifier=llm_classifier, session_gap_seconds=args.session_gap, device_aliases=device_aliases, active_resolve=args.active_resolve, device_groups=device_groups, min_activity_seconds=args.min_activity_seconds, taxonomy=taxonomy)
+    elif args.live:
+        try:
+            pipeline = run_live(args.interface, args.duration, args.idle_timeout, llm_classifier=llm_classifier, session_gap_seconds=args.session_gap, device_aliases=device_aliases, active_resolve=args.active_resolve, arp_sweep=args.arp_sweep, arp_sweep_subnet=args.arp_sweep_subnet, arp_sweep_timeout=args.arp_sweep_timeout, router_devices=args.router_devices, router_credentials=args.router_credentials, device_groups=device_groups, min_activity_seconds=args.min_activity_seconds, taxonomy=taxonomy, dhcp_leases=args.dhcp_leases)
+        except PermissionError:
+            print("Live capture requires elevated privileges (try running with sudo).", file=sys.stderr)
+            sys.exit(1)
+    elif args.serve:
+        from .server import BackgroundCapture, serve
+        from .storage import HistoryStore
+
+        history_store = HistoryStore(args.history_db) if args.history_db else None
+
+        if args.serve_source == "demo":
+            pipeline = run_demo(idle_timeout=args.idle_timeout, llm_classifier=llm_classifier, session_gap_seconds=args.session_gap, device_aliases=device_aliases, active_resolve=args.active_resolve, device_groups=device_groups, min_activity_seconds=args.min_activity_seconds, taxonomy=taxonomy)
+            if history_store is not None:
+                history_store.record_sessions_from_summary(pipeline.summary())
+                history_store.record_time_from_pipeline(pipeline)
+            serve(pipeline, live=False, host=args.host, port=args.port, open_browser=not args.no_browser, history_store=history_store)
+        else:
+            pipeline = Pipeline(idle_timeout_seconds=args.idle_timeout, llm_classifier=llm_classifier, session_gap_seconds=args.session_gap, device_aliases=device_aliases, active_resolve=args.active_resolve, device_groups=device_groups, min_activity_seconds=args.min_activity_seconds, taxonomy=taxonomy)
+            # Grouping and min-activity live on the Pipeline itself, so
+            # BackgroundCapture doesn't need to know about them.
+            capture = BackgroundCapture(pipeline, interface=args.interface, history_store=history_store, arp_sweep=args.arp_sweep, arp_sweep_subnet=args.arp_sweep_subnet, arp_sweep_timeout=args.arp_sweep_timeout, router_devices=args.router_devices, router_credentials=args.router_credentials, dhcp_leases=args.dhcp_leases)
+            try:
+                capture.start()
+            except PermissionError:
+                print("Live capture requires elevated privileges (try running with sudo).", file=sys.stderr)
+                sys.exit(1)
+            serve(pipeline, live=True, host=args.host, port=args.port, open_browser=not args.no_browser, history_store=history_store, capture=capture)
+        return
+    else:
+        parser.error("no mode selected")
+
+    if args.history_db:
+        from .storage import HistoryStore
+        store = HistoryStore(args.history_db)
+        n = store.record_sessions_from_summary(pipeline.summary())
+        intervals = store.record_time_from_pipeline(pipeline)
+        store.close()
+        print(f"Recorded {n} session(s) and {intervals} activity interval(s) to {args.history_db}")
+
+    if args.json or args.output:
+        summary = pipeline.summary()
+        text = json.dumps(summary, indent=2)
+        if args.output:
+            output_path = Path(args.output).expanduser()
+            with open(output_path, "w") as f:
+                f.write(text)
+            print(f"Wrote summary to {output_path}")
+        else:
+            print(text)
+    else:
+        print_report(pipeline)
+
+
+if __name__ == "__main__":
+    main()
