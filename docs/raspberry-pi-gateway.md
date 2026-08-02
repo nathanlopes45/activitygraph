@@ -146,15 +146,51 @@ python3 -m venv .venv
 ### 4. LAN interface
 
 Give `eth1` a static address on its own subnet, distinct from the upstream
-router's `192.168.1.x` so routing stays unambiguous.
+router's `192.168.1.x` so routing stays unambiguous. Leave `eth0` alone: it
+takes a DHCP lease from the upstream router as normal.
 
-`/etc/dhcpcd.conf`:
+Raspberry Pi OS switched from `dhcpcd` to NetworkManager in Bookworm
+(October 2023). On current images `/etc/dhcpcd.conf` does not exist or is
+ignored, so editing it looks like it works and changes nothing. Check which
+system you have:
+
+```bash
+systemctl is-active NetworkManager && ls -l /etc/dhcpcd.conf
+```
+
+**NetworkManager (current images):**
+
+```bash
+sudo nmcli connection add \
+  type ethernet ifname eth1 con-name ag-lan \
+  ipv4.method manual ipv4.addresses 192.168.50.1/24 \
+  ipv4.never-default yes ipv6.method disabled
+
+sudo nmcli connection up ag-lan
+```
+
+No gateway is set, because `eth1` faces your devices rather than the
+internet. `ipv4.never-default yes` guarantees `eth1` can never become the
+default route, which protects the capture invariant: an interface carrying
+the default route is by definition the WAN side. `ipv6.method disabled`
+keeps the LAN single-stack, so devices cannot pick up IPv6 routes that
+bypass NAT and therefore bypass measurement.
+
+`sudo nmtui` offers the same thing as an interactive menu.
+
+**dhcpcd (older images only)**, appended to `/etc/dhcpcd.conf`:
+
 ```
 interface eth1
 static ip_address=192.168.50.1/24
 ```
 
-Leave `eth0` alone. It takes a DHCP lease from the upstream router as normal.
+Verify, whichever path you took:
+
+```bash
+ip addr show eth1     # expect inet 192.168.50.1/24
+ip route              # default route MUST be on eth0, not eth1
+```
 
 ### 5. DHCP and DNS
 
