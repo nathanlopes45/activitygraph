@@ -143,6 +143,28 @@ python3 -m venv .venv
 .venv/bin/python -m activitygraph.main --demo    # smoke test, no root needed
 ```
 
+If you copied the project across with `scp -r` instead of cloning, check
+where it actually landed before continuing. `scp -r src dest` copies *into*
+`dest` when that directory already exists, which nests the project one level
+deeper than intended:
+
+```bash
+find ~ -name pyproject.toml -not -path '*/.venv/*' 2>/dev/null
+```
+
+Whatever directory holds `pyproject.toml` is the project root. Every path in
+the rest of this guide is relative to it, including the systemd unit in
+step 9. Note that the root legitimately *contains* a folder named
+`activitygraph` (the Python package), so seeing that nested name is normal
+and not itself a sign of a bad copy.
+
+An scp'd copy also brings the source machine's `.venv`, which is useless on
+the Pi's architecture. Delete it before creating a new one:
+
+```bash
+rm -rf .venv
+```
+
 ### 4. LAN interface
 
 Give `eth1` a static address on its own subnet, distinct from the upstream
@@ -343,10 +365,20 @@ sudo systemctl enable --now activitygraph
 journalctl -u activitygraph -f
 ```
 
-The paths assume the repository lives at `/opt/activitygraph`. Adjust them to
-wherever you cloned it. Note that `pi` is no longer the default user on
-current Raspberry Pi OS images, so a unit file hardcoding `/home/pi` will
-fail to start.
+The paths assume the project root is `/opt/activitygraph`. Replace them with
+the directory containing `pyproject.toml` on your machine, which is what
+step 3 had you locate. Two things that commonly break this unit:
+
+- `pi` is no longer the default user on current Raspberry Pi OS images, so a
+  unit file hardcoding `/home/pi` fails to start.
+- Systemd needs absolute paths. `~` is not expanded, so `~/activitygraph`
+  silently resolves to nothing.
+
+Check it started rather than assuming:
+
+```bash
+systemctl is-active activitygraph || journalctl -u activitygraph -n 30
+```
 
 ---
 
