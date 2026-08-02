@@ -301,6 +301,15 @@ categories, per-person time -- with the existing code unchanged. It's also
 names straight from its own lease table, so nothing depends on your router's
 brand, admin API or credentials.
 
+```
+internet -- modem/router -- [ Pi ] -- access point -- your devices
+            (Wi-Fi off)    eth0 eth1                  ^ captured here
+```
+
+The devices must sit *downstream* of the Pi. Anything that connects to a
+radio above it reaches the internet without the Pi seeing it, which is the
+usual reason a correct-looking setup reports nothing.
+
 See **[docs/raspberry-pi-gateway.md](docs/raspberry-pi-gateway.md)** for the
 full setup, including the one misconfiguration that silently ruins all
 per-device data (capturing the WAN side, post-NAT -- ActivityGraph now warns
