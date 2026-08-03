@@ -172,13 +172,16 @@ router's `192.168.1.x` so routing stays unambiguous. Leave `eth0` alone: it
 takes a DHCP lease from the upstream router as normal.
 
 Raspberry Pi OS switched from `dhcpcd` to NetworkManager in Bookworm
-(October 2023). On current images `/etc/dhcpcd.conf` does not exist or is
-ignored, so editing it looks like it works and changes nothing. Check which
-system you have:
+(October 2023). Check which system you have:
 
 ```bash
 systemctl is-active NetworkManager && ls -l /etc/dhcpcd.conf
 ```
+
+If that reports `active`, use the NetworkManager path below. Note that
+`/etc/dhcpcd.conf` is often still present on such a system: it exists, looks
+entirely editable, and is completely ignored. Its presence is not evidence
+that dhcpcd is in use.
 
 **NetworkManager (current images):**
 
@@ -213,6 +216,37 @@ Verify, whichever path you took:
 ip addr show eth1     # expect inet 192.168.50.1/24
 ip route              # default route MUST be on eth0, not eth1
 ```
+
+On the NetworkManager path, confirm the settings resolved as intended rather
+than assuming the command that printed "successfully added" did what you
+meant. `nmcli` accepts unambiguous abbreviations, so a truncated value is
+accepted silently:
+
+```bash
+nmcli -g ipv4.method,ipv4.addresses,ipv4.never-default,ipv6.method \
+  connection show ag-lan
+```
+
+Expected, in order:
+
+```
+manual
+192.168.50.1/24
+yes
+disabled
+```
+
+Correct any that differ, for example:
+
+```bash
+sudo nmcli connection modify ag-lan ipv6.method disabled
+sudo nmcli connection up ag-lan
+```
+
+At this point `eth1` will report `NO-CARRIER` and its route will be marked
+`linkdown`, because nothing is plugged into it yet. That is expected and
+clears when you cable the access point in step 7. The address and the route
+are configured regardless.
 
 ### 5. DHCP and DNS
 
