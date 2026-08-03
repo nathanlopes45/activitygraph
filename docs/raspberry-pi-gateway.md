@@ -475,11 +475,42 @@ you can still reach its admin page. Make sure it is outside the
 
 Its DSL or WAN port stays unused. You are only using its switch and radio.
 
-Before doing this by hand, check the AP's admin page for an **Operation Mode**
-setting. Many consumer gateways offer "Access Point" alongside "Wireless
-Router", and selecting it disables DHCP and bridges the LAN and Wi-Fi in a
-single toggle, which is far less error-prone than setting each option
-individually.
+> **Beware the advice you will find online.** Searching for how to reuse a
+> router as an access point usually returns a "double NAT" method: connect
+> its **WAN** port and give it a different subnet. That works for extending
+> Wi-Fi and is wrong here. It NATs every device before the traffic reaches
+> the Pi, so the capture sees one address instead of your actual devices.
+> Use a LAN port.
+
+#### Where these settings live
+
+Check first for an **Operation Mode** setting offering "Access Point"
+alongside "Wireless Router". Selecting it disables DHCP and bridges the LAN
+and Wi-Fi in one toggle, which is far less error-prone than setting each
+option individually. Many DSL gateways do **not** offer it, in which case
+configure the settings by hand.
+
+Look under an **Advanced** view rather than a Basic or simple one, which
+usually hides LAN settings entirely.
+
+The DHCP toggle is frequently **not** on a page of its own. On TP-Link
+gateways, and many others, both settings sit on the same page:
+
+```
+Advanced > Network > LAN Settings
+    IP Address      192.168.50.2
+    Subnet Mask     255.255.255.0
+    DHCP Server     [ ] Enable      <- checkbox, below the IP fields
+```
+
+That is convenient: change both and save once, so the router drops off the
+network a single time rather than twice.
+
+**Saving disconnects you**, because the admin page is no longer at the
+address your browser is using. That is expected. You can reach it again at
+its new address once the Pi is serving DHCP in step 8, or immediately by
+giving your computer a temporary static address on the same subnet, such as
+`192.168.50.10` with mask `255.255.255.0` and no gateway.
 
 **If your access point is the same model as your upstream router**, configure
 it *first, while it is the only one powered on*. Identical units ship with the
