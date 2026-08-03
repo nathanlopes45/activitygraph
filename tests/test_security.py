@@ -127,3 +127,23 @@ def test_no_untrusted_interpolation_into_inner_html():
             continue
         # Clearing a container is fine; assigning anything else is not.
         assert "innerHTML = \"\"" in line, f"unexpected innerHTML assignment: {line.strip()}"
+
+
+# ---------------- usable startup URLs ----------------
+
+def test_wildcard_bind_expands_to_reachable_addresses():
+    """0.0.0.0 means "listen on every interface", not a destination. Printing
+    it back gives the operator an address that cannot be opened."""
+    from activitygraph.server import reachable_urls
+
+    urls = reachable_urls("0.0.0.0", 8420)
+    assert "http://0.0.0.0:8420" not in urls
+    assert all(u.endswith(":8420") for u in urls)
+    assert any("127.0.0.1" in u for u in urls)
+
+
+def test_explicit_host_is_used_verbatim():
+    from activitygraph.server import reachable_urls
+
+    assert reachable_urls("192.168.50.1", 8420) == ["http://192.168.50.1:8420"]
+    assert reachable_urls("127.0.0.1", 9000) == ["http://127.0.0.1:9000"]

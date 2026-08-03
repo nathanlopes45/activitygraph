@@ -88,6 +88,40 @@ def _is_loopback(host: str) -> bool:
         return host in ("localhost", "")
 
 
+def _is_wildcard(host: str) -> bool:
+    """True for the bind-any addresses, which are not reachable destinations."""
+    return host in ("0.0.0.0", "::", "")
+
+
+def reachable_urls(host: str, port: int) -> list[str]:
+    """URLs that will actually open in a browser.
+
+    `0.0.0.0` means "listen on every interface", so printing it back is
+    useless: it is not somewhere you can browse to. Expand it into the
+    machine's real addresses instead, which on a gateway means one URL per
+    side of the network.
+    """
+    if not _is_wildcard(host):
+        return [f"http://{host}:{port}"]
+
+    addresses: list[str] = []
+    try:
+        import socket
+
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            address = info[4][0]
+            if address not in addresses:
+                addresses.append(address)
+    except Exception:
+        pass
+
+    # Loopback always works locally and is a useful fallback when the
+    # hostname does not resolve to anything.
+    if "127.0.0.1" not in addresses:
+        addresses.append("127.0.0.1")
+    return [f"http://{address}:{port}" for address in addresses]
+
+
 def serve(pipeline, live: bool = False, host: str = "127.0.0.1", port: int = 8420, open_browser: bool = True, history_store=None, capture=None) -> None:
     """Blocking call: starts the dashboard server. Ctrl-C to stop."""
     import uvicorn
@@ -106,10 +140,18 @@ def serve(pipeline, live: bool = False, host: str = "127.0.0.1", port: int = 842
 
     app = create_app(pipeline, live=live, history_store=history_store, capture=capture)
 
-    if open_browser:
-        threading.Timer(1.0, lambda: _try_open_browser(f"http://{host}:{port}")).start()
+    urls = reachable_urls(host, port)
 
-    print(f"\nActivityGraph dashboard running at http://{host}:{port}  (mode: {'live' if live else 'demo'})")
+    if open_browser:
+        threading.Timer(1.0, lambda: _try_open_browser(urls[0])).start()
+
+    mode = "live" if live else "demo"
+    if len(urls) == 1:
+        print(f"\nActivityGraph dashboard running at {urls[0]}  (mode: {mode})")
+    else:
+        print(f"\nActivityGraph dashboard running  (mode: {mode}). Open any of:")
+        for url in urls:
+            print(f"    {url}")
     print("Press Ctrl-C to stop.\n")
     uvicorn.run(app, host=host, port=port, log_level="warning")
 
