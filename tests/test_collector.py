@@ -68,3 +68,71 @@ def test_arp_sweep_and_ingest_emits_synthetic_arp_packets():
     assert packet.proto == "ARP"
     assert packet.arp_sender_ip == "192.168.1.50"
     assert packet.arp_sender_mac == "AA:BB:CC:DD:EE:FF"
+
+
+# ---------------- DNS record parsing ----------------
+
+# scapy moved the DNS qd/an/ns/ar sections to PacketListFields. The old
+# single-record access still works through a shim that emits a
+# DeprecationWarning and silently returns only the first record, so these
+# cover the behaviour that shim would have quietly broken.
+
+def _dns_response(question, answers):
+    """A DNS response, serialised and re-parsed the way capture sees it.
+
+    Record counts are computed on the wire, so a hand-built packet has them
+    unset. Answers must be passed as a list: chaining DNSRR objects with "/"
+    builds a payload chain, which serialises as a single answer.
+    """
+    from scapy.all import DNS, DNSQR, DNSRR, Ether, IP, UDP
+
+    frame = (Ether() / IP(src="192.168.1.1", dst="192.168.1.50")
+             / UDP(sport=53, dport=51234)
+             / DNS(qr=1, qd=DNSQR(qname=question),
+                   an=[DNSRR(**kw) for kw in answers]))
+    return Ether(bytes(frame))
+
+
+def test_every_answer_in_a_multi_record_response_is_captured():
+    """Real CDN lookups answer with several records at once. Reading only
+    the first would leave most of a service's addresses unattributed, and
+    that traffic would fall through to the generic HTTPS bucket."""
+    from activitygraph.collector import _packet_to_normalized
+
+    packet = _dns_response("www.youtube.com", [
+        dict(rrname="www.youtube.com", type="CNAME", rdata="ytcdn.example"),
+        dict(rrname="ytcdn.example", type="A", rdata="142.250.66.238"),
+        dict(rrname="ytcdn.example", type="A", rdata="142.250.66.239"),
+        dict(rrname="ytcdn.example", type="AAAA", rdata="2404:6800:4006::200e"),
+    ])
+    parsed = _packet_to_normalized(packet)
+
+    assert parsed.dns_query == "www.youtube.com"
+    # The CNAME is deliberately absent: it names a host, not an address, and
+    # flows are matched to hostnames by IP.
+    assert parsed.dns_answers == ["142.250.66.238", "142.250.66.239",
+                                  "2404:6800:4006::200e"]
+
+
+def test_dns_parsing_emits_no_deprecation_warnings():
+    """Pinning this so the old single-record access cannot creep back in.
+    It works today only through a shim that is on its way out."""
+    import warnings
+
+    from activitygraph.collector import _packet_to_normalized
+
+    packet = _dns_response("example.com", [
+        dict(rrname="example.com", type="A", rdata="203.0.113.5"),
+    ])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        assert _packet_to_normalized(packet).dns_answers == ["203.0.113.5"]
+
+
+def test_a_response_with_no_answers_is_not_an_error():
+    """NXDOMAIN and empty responses are routine, not exceptional."""
+    from activitygraph.collector import _packet_to_normalized
+
+    parsed = _packet_to_normalized(_dns_response("nowhere.invalid", []))
+    assert parsed.dns_query == "nowhere.invalid"
+    assert parsed.dns_answers is None

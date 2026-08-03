@@ -63,6 +63,22 @@ def _extract_tls_sni(raw_payload: bytes) -> Optional[str]:
     return None
 
 
+def _dns_records(dns, section: str) -> list:
+    """The records of one DNS section ("qd"/"an"/"ns"/"ar") as a plain list.
+
+    scapy >= 2.5 stores these sections in PacketListFields. It still returns
+    a compatibility wrapper that forwards attribute access to record 0 with
+    a DeprecationWarning, so a record has to be reached by index -- and a
+    section is a list to iterate, not a payload chain to walk.
+    """
+    records = getattr(dns, section, None)
+    if records is None:
+        return []
+    if isinstance(records, list):
+        return list(records)
+    return [records]
+
+
 def _mdns_local_name(dns) -> Optional[str]:
     """Pull a device's own "<Name>.local" hostname out of an mDNS message.
 
@@ -74,14 +90,10 @@ def _mdns_local_name(dns) -> Optional[str]:
     """
     candidates = []
     for section in ("qd", "an", "ar"):
-        record = getattr(dns, section, None)
-        while record is not None:
+        for record in _dns_records(dns, section):
             name = getattr(record, "rrname", None) or getattr(record, "qname", None)
             if name:
                 candidates.append(name.decode(errors="ignore").rstrip("."))
-            record = getattr(record, "payload", None)
-            if not hasattr(record, "rrname") and not hasattr(record, "qname"):
-                break
 
     for name in candidates:
         if not name.lower().endswith(".local"):
@@ -202,13 +214,14 @@ def _packet_to_normalized(scapy_pkt) -> Optional[Packet]:
         src_port, dst_port = int(udp.sport), int(udp.dport)
         if scapy_pkt.haslayer(DNS):
             dns = scapy_pkt[DNS]
-            if dns.qr == 0 and dns.qd is not None:
-                dns_query = dns.qd.qname.decode(errors="ignore").rstrip(".")
-            elif dns.qr == 1 and dns.qd is not None:
-                dns_query = dns.qd.qname.decode(errors="ignore").rstrip(".")
+            questions = _dns_records(dns, "qd")
+            if questions:
+                dns_query = questions[0].qname.decode(errors="ignore").rstrip(".")
+            if dns.qr == 1:
                 answers = []
-                for i in range(dns.ancount):
-                    rr = dns.an[i]
+                # Iterate the section itself rather than ancount: a truncated
+                # capture can advertise more answers than it actually carries.
+                for rr in _dns_records(dns, "an"):
                     # A and AAAA. Skipping AAAA would leave every IPv6 flow
                     # without a hostname, so it would fall through to the
                     # port rule and land in the generic HTTPS bucket.
