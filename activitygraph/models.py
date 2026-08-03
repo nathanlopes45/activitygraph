@@ -133,3 +133,7 @@ class Packet:
     # Passively-observed device name, if this packet carried one (DHCP
     # hostname option, NetBIOS name service, or mDNS/.local hostname).
     hostname_hint: Optional[str] = None
+    # Which protocol the hint came from ("mdns", "nbns", "dhcp"). Names
+    # differ in quality by source, so the registry keeps the best one
+    # rather than the first one to arrive.
+    hostname_source: Optional[str] = None
