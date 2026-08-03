@@ -111,7 +111,12 @@ def load_or_create_secret(path: str) -> bytes:
     """
     secret_path = Path(path).expanduser()
     if secret_path.exists():
-        return secret_path.read_bytes().strip()
+        # Read back byte-for-byte. Stripping here looks harmless but is not:
+        # the secret is 32 random bytes, so roughly one file in twenty
+        # begins or ends with a byte that happens to be ASCII whitespace.
+        # Those installs would load a different secret than they wrote and
+        # invalidate every session on restart, logging out every user.
+        return secret_path.read_bytes()
 
     secret = secrets.token_bytes(32)
     secret_path.parent.mkdir(parents=True, exist_ok=True)
