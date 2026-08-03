@@ -1,0 +1,321 @@
+"""User accounts, password hashing and session tokens.
+
+This module exists because the dashboard changed from a single-user local
+tool into something that holds *other people's* browsing history and decides
+who may see it. That is a meaningful shift in responsibility: a login that
+looks protective but is not is worse than no login at all, because it invites
+exposure the operator believes is covered.
+
+The choices here are deliberately conservative:
+
+- **PBKDF2-HMAC-SHA256 from the standard library**, with a per-user random
+  salt and a high iteration count. No new dependency, and no hand-rolled
+  cryptography. Passwords are never stored, logged, or returned by any API.
+- **HMAC-signed session tokens** carrying only a user id and an expiry. The
+  token is verified before it is trusted, so a client cannot edit it to
+  become another user or extend its own session.
+- **A persisted random secret**, generated once with `secrets` and written
+  with owner-only permissions. Signing with a hardcoded or per-process key
+  would either be forgeable or log everyone out on restart.
+
+Comparisons that involve secrets use `hmac.compare_digest`, which does not
+leak information through how long it takes to fail.
+"""
+from __future__ import annotations
+
+import base64
+import hashlib
+import hmac
+import json
+import os
+import re
+import secrets
+import sqlite3
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Optional
+
+# OWASP's floor for PBKDF2-HMAC-SHA256 has risen over time; this sits above
+# the 2023 guidance and costs a few hundred milliseconds per login, which is
+# unnoticeable to a person and expensive to an attacker guessing offline.
+PBKDF2_ITERATIONS = 600_000
+SALT_BYTES = 16
+SESSION_LIFETIME = timedelta(days=30)
+
+USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9._-]{3,32}$")
+MIN_PASSWORD_LENGTH = 8
+
+
+class AccountError(Exception):
+    """Raised for conditions the caller is expected to show to a user."""
+
+
+@dataclass
+class User:
+    id: int
+    username: str
+    group_name: str
+    is_admin: bool
+
+    def to_dict(self) -> dict:
+        """Safe to serialise: deliberately contains no password material."""
+        return {
+            "id": self.id,
+            "username": self.username,
+            "group": self.group_name,
+            "is_admin": self.is_admin,
+        }
+
+
+# -- password hashing ------------------------------------------------------
+
+def hash_password(password: str) -> str:
+    """Return a self-describing hash string: algorithm, iterations, salt, key.
+
+    Storing the parameters alongside the hash means the iteration count can be
+    raised later without invalidating existing accounts.
+    """
+    salt = secrets.token_bytes(SALT_BYTES)
+    derived = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, PBKDF2_ITERATIONS)
+    return "pbkdf2_sha256${}${}${}".format(
+        PBKDF2_ITERATIONS,
+        base64.b64encode(salt).decode("ascii"),
+        base64.b64encode(derived).decode("ascii"),
+    )
+
+
+def verify_password(password: str, encoded: str) -> bool:
+    """Check a password against a stored hash, in constant time."""
+    try:
+        algorithm, iterations, salt_b64, hash_b64 = encoded.split("$")
+        if algorithm != "pbkdf2_sha256":
+            return False
+        salt = base64.b64decode(salt_b64)
+        expected = base64.b64decode(hash_b64)
+    except (ValueError, TypeError):
+        return False
+
+    candidate = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, int(iterations))
+    return hmac.compare_digest(candidate, expected)
+
+
+# -- session secret --------------------------------------------------------
+
+def load_or_create_secret(path: str) -> bytes:
+    """Read the signing secret, generating it on first use.
+
+    Written with owner-only permissions where the platform supports it. A
+    secret readable by other users would let them mint valid sessions for any
+    account.
+    """
+    secret_path = Path(path).expanduser()
+    if secret_path.exists():
+        return secret_path.read_bytes().strip()
+
+    secret = secrets.token_bytes(32)
+    secret_path.parent.mkdir(parents=True, exist_ok=True)
+    secret_path.write_bytes(secret)
+    if os.name == "posix":
+        secret_path.chmod(0o600)
+    return secret
+
+
+# -- session tokens --------------------------------------------------------
+
+def _b64url(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _unb64url(text: str) -> bytes:
+    return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+
+
+def issue_token(user_id: int, secret: bytes, lifetime: timedelta = SESSION_LIFETIME,
+                now: Optional[datetime] = None) -> str:
+    """Create a signed session token for `user_id`."""
+    now = now or datetime.now(timezone.utc)
+    payload = json.dumps({
+        "uid": user_id,
+        "exp": (now + lifetime).timestamp(),
+    }, separators=(",", ":")).encode("utf-8")
+    signature = hmac.new(secret, payload, hashlib.sha256).digest()
+    return f"{_b64url(payload)}.{_b64url(signature)}"
+
+
+def read_token(token: str, secret: bytes, now: Optional[datetime] = None) -> Optional[int]:
+    """Return the user id from a valid, unexpired token, else None.
+
+    The signature is checked *before* the payload is trusted, so a client
+    cannot promote itself to another user or extend its own expiry by editing
+    the cookie.
+    """
+    now = now or datetime.now(timezone.utc)
+    try:
+        payload_b64, signature_b64 = token.split(".")
+        payload = _unb64url(payload_b64)
+        signature = _unb64url(signature_b64)
+    except (ValueError, TypeError):
+        return None
+
+    expected = hmac.new(secret, payload, hashlib.sha256).digest()
+    if not hmac.compare_digest(signature, expected):
+        return None
+
+    try:
+        data = json.loads(payload)
+        if float(data["exp"]) < now.timestamp():
+            return None
+        return int(data["uid"])
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+# -- account store ---------------------------------------------------------
+
+class AccountStore:
+    """Users and their claimed devices, persisted alongside history."""
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+        self._init_schema()
+
+    def _init_schema(self) -> None:
+        self._conn.executescript("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                password_hash TEXT NOT NULL,
+                group_name TEXT NOT NULL,
+                is_admin INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            );
+
+            -- A device belongs to at most one group, which is why device_mac
+            -- is the primary key rather than a plain column. Without that,
+            -- two users could each claim the same device and both see it.
+            CREATE TABLE IF NOT EXISTS claimed_devices (
+                device_mac TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                claimed_at TEXT NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+        """)
+        self._conn.commit()
+
+    # -- users -------------------------------------------------------------
+    def user_count(self) -> int:
+        return self._conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+
+    def create_user(self, username: str, password: str,
+                    group_name: Optional[str] = None) -> User:
+        """Register an account. The first one created becomes the admin.
+
+        With open registration there is otherwise nobody able to see the whole
+        network, and no way to appoint one.
+        """
+        username = (username or "").strip()
+        if not USERNAME_PATTERN.match(username):
+            raise AccountError(
+                "Username must be 3 to 32 characters, using letters, digits, dot, dash "
+                "or underscore."
+            )
+        if len(password or "") < MIN_PASSWORD_LENGTH:
+            raise AccountError(f"Password must be at least {MIN_PASSWORD_LENGTH} characters.")
+
+        is_admin = self.user_count() == 0
+        try:
+            cur = self._conn.execute(
+                """INSERT INTO users (username, password_hash, group_name, is_admin, created_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (username, hash_password(password), (group_name or username).strip(),
+                 1 if is_admin else 0, datetime.now(timezone.utc).isoformat()),
+            )
+        except sqlite3.IntegrityError:
+            raise AccountError("That username is already taken.") from None
+        self._conn.commit()
+        return User(id=cur.lastrowid, username=username,
+                    group_name=(group_name or username).strip(), is_admin=is_admin)
+
+    def authenticate(self, username: str, password: str) -> Optional[User]:
+        """Return the user on correct credentials, else None.
+
+        The same None is returned for an unknown username and a wrong
+        password, so the response cannot be used to discover which accounts
+        exist.
+        """
+        row = self._conn.execute(
+            "SELECT id, username, password_hash, group_name, is_admin FROM users WHERE username = ?",
+            (username or "",),
+        ).fetchone()
+        if row is None:
+            # Spend roughly the same time as a real check, so response timing
+            # does not reveal whether the account exists.
+            hash_password(password or "")
+            return None
+        if not verify_password(password or "", row[2]):
+            return None
+        return User(id=row[0], username=row[1], group_name=row[3], is_admin=bool(row[4]))
+
+    def get_user(self, user_id: int) -> Optional[User]:
+        row = self._conn.execute(
+            "SELECT id, username, group_name, is_admin FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        return User(id=row[0], username=row[1], group_name=row[2], is_admin=bool(row[3]))
+
+    def set_group_name(self, user_id: int, group_name: str) -> None:
+        group_name = (group_name or "").strip()
+        if not group_name:
+            raise AccountError("Group name cannot be empty.")
+        self._conn.execute("UPDATE users SET group_name = ? WHERE id = ?", (group_name, user_id))
+        self._conn.commit()
+
+    # -- claimed devices ---------------------------------------------------
+    def claim_device(self, user_id: int, mac: str) -> None:
+        """Attach a device to this user, taking it from whoever held it.
+
+        Re-claiming is allowed because the claim can only be made from the
+        device itself, so whoever is holding it is the person entitled to say
+        where it belongs.
+        """
+        self._conn.execute(
+            """INSERT INTO claimed_devices (device_mac, user_id, claimed_at)
+               VALUES (?, ?, ?)
+               ON CONFLICT(device_mac) DO UPDATE SET
+                 user_id = excluded.user_id,
+                 claimed_at = excluded.claimed_at""",
+            (mac.upper(), user_id, datetime.now(timezone.utc).isoformat()),
+        )
+        self._conn.commit()
+
+    def release_device(self, user_id: int, mac: str) -> bool:
+        cur = self._conn.execute(
+            "DELETE FROM claimed_devices WHERE device_mac = ? AND user_id = ?",
+            (mac.upper(), user_id),
+        )
+        self._conn.commit()
+        return cur.rowcount > 0
+
+    def macs_for_user(self, user_id: int) -> set[str]:
+        return {
+            row[0] for row in self._conn.execute(
+                "SELECT device_mac FROM claimed_devices WHERE user_id = ?", (user_id,)
+            )
+        }
+
+    def owner_of(self, mac: str) -> Optional[int]:
+        row = self._conn.execute(
+            "SELECT user_id FROM claimed_devices WHERE device_mac = ?", (mac.upper(),)
+        ).fetchone()
+        return row[0] if row else None
+
+    def group_map(self) -> dict[str, str]:
+        """MAC -> group name, for every claimed device."""
+        return {
+            row[0]: row[1] for row in self._conn.execute(
+                """SELECT c.device_mac, u.group_name
+                   FROM claimed_devices c JOIN users u ON u.id = c.user_id"""
+            )
+        }
