@@ -361,12 +361,187 @@
     color: var(--text-muted);
   }
 
+  /* ---------------- accounts ---------------- */
+
+  /* The sign-in gate covers the dashboard rather than sitting alongside it,
+     so no panel is ever briefly visible to someone who is not signed in. */
+  .auth-gate {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    background: var(--bg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .auth-gate[hidden] { display: none; }
+  .auth-card {
+    width: 100%;
+    max-width: 380px;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 28px;
+  }
+  .auth-card h2 {
+    font-family: var(--mono);
+    font-size: 15px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+  }
+  .auth-card .auth-blurb {
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    margin-bottom: 20px;
+  }
+  .auth-card label {
+    display: block;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+  }
+  .auth-card input {
+    width: 100%;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    color: var(--text-primary);
+    font-family: var(--sans);
+    font-size: 14px;
+    margin-bottom: 16px;
+  }
+  .auth-card input:focus {
+    outline: none;
+    border-color: var(--accent-dim);
+  }
+  .btn {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 9px 14px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+    cursor: pointer;
+  }
+  .btn:hover { border-color: var(--accent-dim); }
+  .btn-primary {
+    width: 100%;
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #10161B;
+    font-weight: 600;
+  }
+  .btn-primary:hover { background: var(--accent-dim); border-color: var(--accent-dim); }
+  .btn-link {
+    background: none;
+    border: none;
+    color: var(--accent);
+    cursor: pointer;
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 0;
+  }
+  .auth-switch {
+    margin-top: 16px;
+    text-align: center;
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+  .auth-error {
+    background: rgba(232, 165, 72, 0.1);
+    border: 1px solid var(--amber);
+    color: var(--amber);
+    border-radius: 6px;
+    padding: 9px 12px;
+    font-size: 12px;
+    margin-bottom: 16px;
+    line-height: 1.4;
+  }
+  .auth-error[hidden] { display: none; }
+
+  .account-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-secondary);
+  }
+  .admin-badge {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    border: 1px solid var(--accent-dim);
+    border-radius: 4px;
+    padding: 2px 6px;
+  }
+
+  .claimed-device {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .claimed-device:last-child { border-bottom: none; }
+  .claimed-device .cd-name { font-size: 13px; }
+  .claimed-device .cd-meta {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+  .this-device-tag {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-left: 6px;
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .mode-pill.live .dot { animation: none; }
   }
 </style>
 </head>
 <body>
+
+<!-- Hidden until /api/auth/state says accounts are on and nobody is signed
+     in. It covers the page instead of replacing it so the dashboard is
+     never briefly painted for a signed-out visitor. -->
+<div id="auth-gate" class="auth-gate" hidden>
+  <div class="auth-card">
+    <h2 id="auth-title">Sign in</h2>
+    <p class="auth-blurb" id="auth-blurb"></p>
+    <div id="auth-error" class="auth-error" hidden></div>
+    <form id="auth-form">
+      <label for="auth-username">Username</label>
+      <input id="auth-username" name="username" type="text" autocomplete="username" required>
+      <label for="auth-password">Password</label>
+      <input id="auth-password" name="password" type="password" autocomplete="current-password" required>
+      <button type="submit" class="btn btn-primary" id="auth-submit">Sign in</button>
+    </form>
+    <div class="auth-switch">
+      <span id="auth-switch-text">No account yet?</span>
+      <button type="button" class="btn-link" id="auth-switch-btn">Create one</button>
+    </div>
+  </div>
+</div>
+
 <div class="wrap">
 
   <header>
@@ -375,12 +550,21 @@
       <div class="tagline">digital activity, decoded locally</div>
     </div>
     <div class="header-right">
+      <span id="account-chip" class="account-chip" hidden></span>
       <span id="mode-pill" class="mode-pill demo"><span class="dot"></span><span id="mode-text">demo</span></span>
       <span id="updated-at">--</span>
     </div>
   </header>
 
   <div id="capture-warning" class="capture-warning" hidden></div>
+
+  <section class="panel" id="my-devices-panel" hidden>
+    <div class="panel-head">
+      <span class="panel-title">My Devices</span>
+      <span class="panel-note" id="my-devices-note"></span>
+    </div>
+    <div id="my-devices"></div>
+  </section>
 
   <div class="grid-2">
     <section class="panel">
@@ -1004,6 +1188,12 @@ function renderCaptureWarning(capture) {
 async function refresh() {
   try {
     const res = await fetch("/api/summary");
+    // Signed out, or the session expired while the page was open. Stop
+    // polling and show the gate instead of retrying every few seconds.
+    if (res.status === 401) {
+      document.getElementById("auth-gate").hidden = false;
+      return;
+    }
     const data = await res.json();
 
     const pill = document.getElementById("mode-pill");
@@ -1032,6 +1222,7 @@ async function refresh() {
 async function refreshHistory() {
   try {
     const res = await fetch("/api/history?days=30");
+    if (res.status === 401) return;
     const history = await res.json();
     renderHistory(history);
   } catch (err) {
@@ -1039,6 +1230,200 @@ async function refreshHistory() {
   }
 }
 
+/* ---------------- accounts ---------------- */
+
+// Null until /api/auth/state answers. When accounts are switched off the
+// server reports authenticated: true, so the gate never appears and the
+// single-user local mode behaves exactly as before.
+let authState = null;
+let authMode = "login";   // or "register"
+
+function setAuthError(message) {
+  const box = document.getElementById("auth-error");
+  box.textContent = message || "";
+  box.hidden = !message;
+}
+
+function renderAuthMode() {
+  const registering = authMode === "register";
+  const firstAccount = registering && authState && !authState.any_accounts_exist;
+
+  document.getElementById("auth-title").textContent =
+    registering ? "Create an account" : "Sign in";
+  document.getElementById("auth-submit").textContent =
+    registering ? "Create account" : "Sign in";
+  document.getElementById("auth-switch-text").textContent =
+    registering ? "Already have an account?" : "No account yet?";
+  document.getElementById("auth-switch-btn").textContent =
+    registering ? "Sign in" : "Create one";
+  document.getElementById("auth-password").setAttribute(
+    "autocomplete", registering ? "new-password" : "current-password");
+
+  // Worth saying plainly: the first account is the one that can see the
+  // whole network, and that is not obvious from a sign-up form.
+  document.getElementById("auth-blurb").textContent = firstAccount
+    ? "No accounts exist yet. The first one created becomes the admin and can see every device on the network."
+    : registering
+      ? "You will start with no devices. Open this dashboard on each device you want to add, then claim it there."
+      : "You will see activity for the devices you have claimed.";
+  setAuthError("");
+}
+
+async function postJSON(url, body) {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body || {}),
+  });
+  let data = {};
+  try { data = await res.json(); } catch (err) { /* empty body is fine */ }
+  return { ok: res.ok, data };
+}
+
+async function loadAuthState() {
+  try {
+    const res = await fetch("/api/auth/state");
+    authState = await res.json();
+  } catch (err) {
+    console.error("Failed to load /api/auth/state", err);
+    return;
+  }
+
+  const gate = document.getElementById("auth-gate");
+  const signedOut = authState.accounts_enabled && !authState.authenticated;
+
+  // Someone with no account yet lands on the create form rather than a
+  // sign-in form they cannot use.
+  if (signedOut && !authState.any_accounts_exist) authMode = "register";
+
+  gate.hidden = !signedOut;
+  renderAuthMode();
+  renderAccountChip();
+
+  document.getElementById("my-devices-panel").hidden = !authState.accounts_enabled
+    || !authState.authenticated;
+  if (authState.accounts_enabled && authState.authenticated) refreshMyDevices();
+}
+
+function renderAccountChip() {
+  const chip = document.getElementById("account-chip");
+  chip.innerHTML = "";
+  const user = authState && authState.user;
+  if (!authState || !authState.accounts_enabled || !user) {
+    chip.hidden = true;
+    return;
+  }
+  chip.hidden = false;
+  chip.appendChild(el("span", {}, user.username));
+  if (user.is_admin) chip.appendChild(el("span", { class: "admin-badge" }, "admin"));
+
+  const out = el("button", { class: "btn-link", type: "button" }, "sign out");
+  out.addEventListener("click", async () => {
+    await postJSON("/api/auth/logout");
+    window.location.reload();
+  });
+  chip.appendChild(out);
+}
+
+async function submitAuth(event) {
+  event.preventDefault();
+  const username = document.getElementById("auth-username").value.trim();
+  const password = document.getElementById("auth-password").value;
+  const url = authMode === "register" ? "/api/auth/register" : "/api/auth/login";
+
+  const { ok, data } = await postJSON(url, { username, password });
+  if (!ok) {
+    setAuthError(data.error || "Could not sign in.");
+    return;
+  }
+  // Reload rather than patching state in place: every panel is server-scoped
+  // to the signed-in user, so the whole page needs re-fetching anyway.
+  window.location.reload();
+}
+
+async function refreshMyDevices() {
+  const container = document.getElementById("my-devices");
+  const note = document.getElementById("my-devices-note");
+  let data;
+  try {
+    const res = await fetch("/api/me");
+    if (!res.ok) return;
+    data = await res.json();
+  } catch (err) {
+    console.error("Failed to load /api/me", err);
+    return;
+  }
+
+  container.innerHTML = "";
+  const here = data.this_device || {};
+  const devices = data.devices || [];
+
+  note.textContent = devices.length
+    ? devices.length + (devices.length === 1 ? " device" : " devices")
+    : "none yet";
+
+  if (!here.claimed_by_you) {
+    // The rule the model rests on: a device can only be added from itself,
+    // so this button is the only way in and it has to be explained.
+    const row = el("div", { class: "claimed-device" });
+    const left = el("div", {});
+    if (here.recognised) {
+      left.appendChild(el("div", { class: "cd-name" },
+        "This device" + (here.name ? ": " + here.name : "")));
+      left.appendChild(el("div", { class: "cd-meta" }, here.mac || ""));
+    } else {
+      left.appendChild(el("div", { class: "cd-name" }, "This device is not recognised yet"));
+      left.appendChild(el("div", { class: "cd-meta" },
+        "it needs to send some traffic through the gateway first"));
+    }
+    row.appendChild(left);
+
+    if (here.recognised) {
+      const claim = el("button", { class: "btn", type: "button" }, "Claim this device");
+      claim.addEventListener("click", async () => {
+        const { ok, data: result } = await postJSON("/api/claim");
+        if (!ok) { alert(result.error || "Could not claim this device."); return; }
+        refreshMyDevices();
+        refresh();
+      });
+      row.appendChild(claim);
+    }
+    container.appendChild(row);
+  }
+
+  if (!devices.length && here.claimed_by_you) {
+    container.appendChild(el("div", { class: "empty-state" }, "No devices claimed yet."));
+  }
+
+  devices.forEach(device => {
+    const row = el("div", { class: "claimed-device" });
+    const left = el("div", {});
+    const name = el("div", { class: "cd-name" }, device.name || device.mac || "Unknown device");
+    if (device.is_this_device) name.appendChild(el("span", { class: "this-device-tag" }, "this device"));
+    left.appendChild(name);
+    left.appendChild(el("div", { class: "cd-meta" },
+      [device.mac, device.ip].filter(Boolean).join("  ")));
+    row.appendChild(left);
+
+    const remove = el("button", { class: "btn", type: "button" }, "Remove");
+    remove.addEventListener("click", async () => {
+      const { ok, data: result } = await postJSON("/api/unclaim", { mac: device.mac });
+      if (!ok) { alert(result.error || "Could not remove that device."); return; }
+      refreshMyDevices();
+      refresh();
+    });
+    row.appendChild(remove);
+    container.appendChild(row);
+  });
+}
+
+document.getElementById("auth-form").addEventListener("submit", submitAuth);
+document.getElementById("auth-switch-btn").addEventListener("click", () => {
+  authMode = authMode === "register" ? "login" : "register";
+  renderAuthMode();
+});
+
+loadAuthState();
 refresh();
 refreshHistory();
 </script>

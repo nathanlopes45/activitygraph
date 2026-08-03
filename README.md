@@ -687,6 +687,36 @@ The unsuffixed filenames (`groups.json`, `aliases.json`, `router.json`, ...)
 are listed in `.gitignore` deliberately: they identify your network, and one
 of them holds a password. Keep your real configuration out of version control.
 
+### User accounts
+
+`--device-groups` maps devices to people by editing a file, which suits a
+gateway you administer yourself. `--accounts` is the alternative for a shared
+household: people sign in and assemble their own group, with nobody needing
+to hand-edit JSON or be told anyone else's MAC addresses.
+
+```bash
+activitygraph --serve --serve-source live -i eth1 --host 0.0.0.0 --accounts
+```
+
+How it behaves:
+
+- The **first account registered becomes the admin** and sees every device on
+  the network. Create it yourself, immediately, before anyone else reaches the
+  dashboard.
+- Every other account starts seeing **nothing** and builds up its group by
+  claiming devices.
+- **A device can only be claimed from itself.** To add your phone, open the
+  dashboard on your phone and press "Claim this device". This is enforced
+  against the connection's own source address, so you cannot claim a device
+  you are not holding, and it is why no MAC address ever has to be typed in.
+- A device belongs to **one** group at a time, so shared devices like a TV
+  simply stay unclaimed and remain visible only to the admin.
+
+Accounts and their session key live under `~/.activitygraph/` by default
+(`--accounts PATH` and `--accounts-secret PATH` move them). Deleting the key
+signs everyone out. Passwords are stored as salted PBKDF2-HMAC-SHA256 hashes,
+never in plaintext.
+
 ## Tests
 
 ```bash
@@ -716,10 +746,12 @@ on-device.
 
 Four things to be deliberate about:
 
-- **The dashboard has no authentication.** It binds `127.0.0.1` by default
-  because the threat model is your own browser on your own machine. Binding
-  elsewhere (`--host 0.0.0.0`) exposes every device's browsing activity to
-  anyone who can reach the port; the server prints a warning when you do.
+- **The dashboard is unauthenticated unless you turn on `--accounts`.** It
+  binds `127.0.0.1` by default because the threat model is your own browser
+  on your own machine. Binding elsewhere (`--host 0.0.0.0`) without accounts
+  exposes every device's browsing activity to anyone who can reach the port;
+  the server prints a warning when you do. On a shared network, turn on
+  accounts (see below) rather than relying on nobody looking.
 - **The history database is sensitive.** `--history-db` records a durable
   account of what every device on the network did and when. It is gitignored,
   but treat the file itself as private data.
