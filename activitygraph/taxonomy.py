@@ -35,36 +35,61 @@ OTHER = "Other"
 # category -> subcategory -> [service names, exactly as service_rules emits them]
 DEFAULT_SUBCATEGORIES: dict[str, dict[str, list[str]]] = {
     "Study": {
-        "University": ["Canvas LMS", "University Portal", "Educational Institution"],
-        "Courses": ["Coursera", "Khan Academy"],
+        "University": ["Canvas LMS", "University Portal", "Educational Institution",
+                       "Turnitin", "Overleaf"],
+        "Courses": ["Coursera", "Khan Academy", "edX", "Udemy", "Duolingo"],
+        "Reference": ["Wikipedia", "Google Scholar", "Quizlet", "Chegg"],
     },
     "Entertainment": {
-        "Music": ["Spotify", "YouTube Music"],
-        "Video": ["YouTube", "Netflix", "Disney+", "Prime Video", "Twitch"],
+        "Music": ["Spotify", "YouTube Music", "SoundCloud", "Pandora"],
+        "Video": ["YouTube", "Netflix", "Disney+", "Prime Video", "Twitch",
+                  "Hulu", "Max", "Paramount+", "Vimeo"],
     },
     "Social Media": {
-        "Feeds": ["Instagram", "Facebook", "TikTok", "X (Twitter)", "Snapchat"],
+        "Feeds": ["Instagram", "Facebook", "TikTok", "X (Twitter)", "Snapchat",
+                  "Pinterest", "Tumblr"],
         "Forums": ["Reddit"],
         "Professional": ["LinkedIn"],
     },
     "Communication": {
-        "Messaging": ["WhatsApp", "Messenger", "Discord", "Slack"],
+        "Messaging": ["WhatsApp", "Messenger", "Discord", "Slack", "Telegram", "Signal"],
         "Email": ["Gmail", "Outlook"],
-        "Meetings": ["Zoom", "Microsoft Teams"],
+        "Meetings": ["Zoom", "Microsoft Teams", "Skype"],
     },
     "Productivity": {
-        "Documents": ["Google Docs", "Notion", "Atlassian (Jira/Confluence)"],
-        "Storage": ["Google Drive", "Dropbox"],
+        "Documents": ["Google Docs", "Notion", "Atlassian (Jira/Confluence)",
+                      "Microsoft 365", "SharePoint", "Trello", "Asana"],
+        "Storage": ["Google Drive", "Dropbox", "OneDrive", "iCloud"],
+        "Design": ["Canva", "Figma", "Adobe"],
     },
     "Software Development": {
-        "Code Hosting": ["GitHub", "GitLab"],
-        "Reference": ["Stack Overflow"],
+        "Code Hosting": ["GitHub", "GitLab", "Bitbucket"],
+        "Reference": ["Stack Overflow", "Read the Docs"],
+        "Packages": ["npm", "PyPI", "Docker Hub"],
+        "Practice": ["LeetCode", "HackerRank", "Kaggle"],
     },
     "Gaming": {
-        "Platforms": ["Steam", "Epic Games", "Xbox Live"],
+        "Platforms": ["Steam", "Epic Games", "Xbox Live", "PlayStation Network",
+                      "Nintendo", "Battle.net"],
+        "Games": ["Riot Games", "Roblox", "Minecraft"],
     },
     "Shopping": {
-        "Retail": ["Amazon", "eBay"],
+        "Retail": ["Amazon", "eBay", "AliExpress", "Etsy"],
+        "Groceries": ["Woolworths", "Coles"],
+    },
+    "AI Assistants": {
+        "Chat": ["ChatGPT", "Claude", "Gemini", "Perplexity", "Microsoft Copilot"],
+    },
+    "Finance": {
+        "Banking": ["Commonwealth Bank", "NAB", "ANZ", "Westpac"],
+        "Payments": ["PayPal", "Stripe"],
+    },
+    "Web Browsing": {
+        "Search": ["Google Search", "Bing", "DuckDuckGo", "Ecosia"],
+    },
+    "Ads and Tracking": {
+        "Advertising": ["Google Ads", "AppNexus", "Criteo"],
+        "Analytics": ["Google Analytics", "Google Tag Manager", "Analytics"],
     },
 }
 

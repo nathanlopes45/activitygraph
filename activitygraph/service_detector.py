@@ -21,11 +21,19 @@ LLMClassifier = Callable[[Optional[str], int], Optional[ServiceMatch]]
 
 
 class ServiceDetector:
-    def __init__(self, llm_classifier: Optional[LLMClassifier] = None) -> None:
+    def __init__(self, llm_classifier: Optional[LLMClassifier] = None,
+                 name_store=None) -> None:
         # ip -> hostname, most recent DNS answer wins. Checked against both
         # endpoints of a flow (see _resolve_hostname), since a reply flow's
         # dst_ip is the local device, not the server that was looked up.
         self._dns_cache: dict[str, str] = {}
+        # Optional HistoryStore used to carry that cache across restarts.
+        # Seeded up front so classification is useful from the first packet
+        # rather than only after each device repeats a DNS lookup.
+        self._name_store = name_store
+        self._unsaved: dict[str, str] = {}
+        if name_store is not None:
+            self._dns_cache.update(name_store.load_dns_names())
         # (frozenset({ip_a, ip_b}), server_port) -> SNI hostname. Keyed by an
         # unordered IP pair (not src/dst) so the reply-direction Flow --
         # which has src_ip/dst_ip swapped relative to the ClientHello packet
@@ -38,11 +46,25 @@ class ServiceDetector:
         """Feed a raw packet in so DNS answers / SNI hints get cached."""
         if packet.dns_query and packet.dns_answers:
             for ip in packet.dns_answers:
+                if self._dns_cache.get(ip) != packet.dns_query:
+                    self._unsaved[ip] = packet.dns_query
                 self._dns_cache[ip] = packet.dns_query
 
         if packet.tls_sni and packet.dst_port:
             key = (frozenset((packet.src_ip, packet.dst_ip)), packet.dst_port)
             self._sni_cache[key] = packet.tls_sni
+
+    def flush(self) -> None:
+        """Write newly-learned hostnames out.
+
+        Called from the same periodic hook that records sessions, not from
+        observe(): a synchronous SQLite write per DNS answer would put disk
+        latency directly in the packet-capture path.
+        """
+        if self._name_store is None or not self._unsaved:
+            return
+        self._name_store.save_dns_names(self._unsaved)
+        self._unsaved.clear()
 
     # -- classification -----------------------------------------------------
     def classify(self, flow: Flow) -> ServiceMatch:

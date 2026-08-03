@@ -40,12 +40,12 @@ from .time_analytics import (
 
 
 class Pipeline:
-    def __init__(self, idle_timeout_seconds: float = 30.0, llm_classifier=None, session_gap_seconds: float = 300.0, device_aliases=None, active_resolve: bool = False, device_groups=None, min_activity_seconds: float = DEFAULT_MIN_ACTIVITY_SECONDS, taxonomy=None) -> None:
+    def __init__(self, idle_timeout_seconds: float = 30.0, llm_classifier=None, session_gap_seconds: float = 300.0, device_aliases=None, active_resolve: bool = False, device_groups=None, min_activity_seconds: float = DEFAULT_MIN_ACTIVITY_SECONDS, taxonomy=None, name_store=None) -> None:
         self.groups = GroupRegistry(device_groups)
         self.taxonomy = TaxonomyRegistry(taxonomy)
         self.devices = DeviceRegistry(aliases=device_aliases, active_resolve=active_resolve, groups=self.groups)
         self.flows = FlowProcessor(idle_timeout_seconds=idle_timeout_seconds)
-        self.services = ServiceDetector(llm_classifier=llm_classifier)
+        self.services = ServiceDetector(llm_classifier=llm_classifier, name_store=name_store)
         self.session_gap_seconds = session_gap_seconds
         self.min_activity_seconds = min_activity_seconds
 
@@ -391,7 +391,10 @@ def main() -> None:
                 history_store.record_time_from_pipeline(pipeline)
             serve(pipeline, live=False, host=args.host, port=args.port, open_browser=not args.no_browser, history_store=history_store)
         else:
-            pipeline = Pipeline(idle_timeout_seconds=args.idle_timeout, llm_classifier=llm_classifier, session_gap_seconds=args.session_gap, device_aliases=device_aliases, active_resolve=args.active_resolve, device_groups=device_groups, min_activity_seconds=args.min_activity_seconds, taxonomy=taxonomy)
+            # The history database doubles as the learned IP -> hostname
+            # store, so a restarted gateway keeps recognising services it
+            # has already seen instead of relabelling them all as "HTTPS".
+            pipeline = Pipeline(idle_timeout_seconds=args.idle_timeout, llm_classifier=llm_classifier, session_gap_seconds=args.session_gap, device_aliases=device_aliases, active_resolve=args.active_resolve, device_groups=device_groups, min_activity_seconds=args.min_activity_seconds, taxonomy=taxonomy, name_store=history_store)
             # Grouping and min-activity live on the Pipeline itself, so
             # BackgroundCapture doesn't need to know about them.
             capture = BackgroundCapture(pipeline, interface=args.interface, history_store=history_store, arp_sweep=args.arp_sweep, arp_sweep_subnet=args.arp_sweep_subnet, arp_sweep_timeout=args.arp_sweep_timeout, router_devices=args.router_devices, router_credentials=args.router_credentials, dhcp_leases=args.dhcp_leases)

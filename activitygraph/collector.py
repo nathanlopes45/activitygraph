@@ -63,7 +63,40 @@ def _extract_tls_sni(raw_payload: bytes) -> Optional[str]:
     return None
 
 
-def _extract_hostname_hint(scapy_pkt, proto: str, src_port, dst_port) -> Optional[str]:
+def _mdns_local_name(dns) -> Optional[str]:
+    """Pull a device's own "<Name>.local" hostname out of an mDNS message.
+
+    A Bonjour announcement carries several records, and the useful one is
+    rarely first. Service-discovery records ("_airplay._tcp.local") name a
+    *service*, not the device, and the PTR/SRV chain often leads with those,
+    so scan every record and question and take the first name that is a
+    plain host label rather than a service instance.
+    """
+    candidates = []
+    for section in ("qd", "an", "ar"):
+        record = getattr(dns, section, None)
+        while record is not None:
+            name = getattr(record, "rrname", None) or getattr(record, "qname", None)
+            if name:
+                candidates.append(name.decode(errors="ignore").rstrip("."))
+            record = getattr(record, "payload", None)
+            if not hasattr(record, "rrname") and not hasattr(record, "qname"):
+                break
+
+    for name in candidates:
+        if not name.lower().endswith(".local"):
+            continue
+        # "_airplay._tcp.local" and "Sams iPhone._raop._tcp.local" both name
+        # a service. Only "Sams-iPhone.local" names the device itself.
+        if "_tcp" in name.lower() or "_udp" in name.lower():
+            continue
+        label = name.split(".")[0]
+        if label and not label.startswith("_"):
+            return label.replace("-", " ").strip()
+    return None
+
+
+def _extract_hostname_hint(scapy_pkt, proto: str, src_port, dst_port) -> Optional[tuple[str, str]]:
     """Best-effort passive device-name discovery. Never sends anything --
     only reads names devices already broadcast/announce on their own:
 
@@ -73,26 +106,20 @@ def _extract_hostname_hint(scapy_pkt, proto: str, src_port, dst_port) -> Optiona
       NetBIOS Name Service.
     - DHCP (UDP 67/68): a device's lease request often carries its
       hostname in Option 12.
+
+    Returns (name, source) so the registry can prefer a better source over
+    a worse one, rather than keeping whichever arrived first. Sources are
+    not equally good: a DHCP option 12 hostname is frequently a generic
+    model name, while the mDNS name is usually the one the owner chose.
     """
     if proto != "UDP":
         return None
 
     if dst_port == 5353 or src_port == 5353:
         if scapy_pkt.haslayer(DNS):
-            dns = scapy_pkt[DNS]
-            qname = None
-            if dns.qd is not None:
-                qname = dns.qd.qname
-            elif dns.an is not None and hasattr(dns.an, "rrname"):
-                qname = dns.an.rrname
-            if qname:
-                name = qname.decode(errors="ignore").rstrip(".")
-                if name.endswith(".local"):
-                    # Take the leftmost label: "Alices-MacBook-Pro.local" -> "Alices-MacBook-Pro"
-                    # Skip mDNS service-discovery meta-queries (they contain "_tcp"/"_udp").
-                    label = name.split(".")[0]
-                    if "_tcp" not in name and "_udp" not in name and label:
-                        return label.replace("-", " ")
+            name = _mdns_local_name(scapy_pkt[DNS])
+            if name:
+                return name, "mdns"
         return None
 
     if dst_port == 137 or src_port == 137:
@@ -102,7 +129,7 @@ def _extract_hostname_hint(scapy_pkt, proto: str, src_port, dst_port) -> Optiona
                 if raw:
                     name = raw.decode(errors="ignore").strip()
                     if name and name.upper() != "ISATAP":  # common noise entry, not a real host
-                        return name
+                        return name, "nbns"
         return None
 
     if dst_port in (67, 68) or src_port in (67, 68):
@@ -110,7 +137,9 @@ def _extract_hostname_hint(scapy_pkt, proto: str, src_port, dst_port) -> Optiona
             for opt in scapy_pkt[DHCP].options:
                 if isinstance(opt, tuple) and opt[0] == "hostname" and opt[1]:
                     value = opt[1]
-                    return value.decode(errors="ignore") if isinstance(value, bytes) else str(value)
+                    name = value.decode(errors="ignore") if isinstance(value, bytes) else str(value)
+                    if name.strip():
+                        return name.strip(), "dhcp"
         return None
 
     return None
@@ -146,6 +175,7 @@ def _packet_to_normalized(scapy_pkt) -> Optional[Packet]:
     dns_answers = None
     tls_sni = None
     hostname_hint = None
+    hostname_source = None
 
     if scapy_pkt.haslayer(TCP):
         proto = "TCP"
@@ -171,7 +201,9 @@ def _packet_to_normalized(scapy_pkt) -> Optional[Packet]:
                     if isinstance(rr, DNSRR) and rr.type == 1:  # A record
                         answers.append(rr.rdata)
                 dns_answers = answers or None
-        hostname_hint = _extract_hostname_hint(scapy_pkt, proto, src_port, dst_port)
+        hint = _extract_hostname_hint(scapy_pkt, proto, src_port, dst_port)
+        if hint is not None:
+            hostname_hint, hostname_source = hint
     elif ip_layer.proto == 1:
         proto = "ICMP"
 
@@ -189,6 +221,7 @@ def _packet_to_normalized(scapy_pkt) -> Optional[Packet]:
         dns_answers=dns_answers,
         tls_sni=tls_sni,
         hostname_hint=hostname_hint,
+        hostname_source=hostname_source,
     )
 
 

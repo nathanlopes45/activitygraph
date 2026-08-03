@@ -35,9 +35,14 @@ see [Roadmap](#roadmap).
   how a router resolves names for its own admin UI) -- or, with
   `--dhcp-leases` / `--router-devices` (opt-in), read from a DHCP server's
   lease table, which covers devices that answer neither of the above
-  (phones, commonly). Not every device announces or answers a name, so some
-  will still only show a vendor or IP; that is reported as unknown rather
-  than guessed at.
+  (phones, commonly). Where a device announces different names on different
+  protocols, the most specific one wins rather than the first one heard:
+  phones routinely send a bare model name over DHCP ("iPhone") while
+  advertising the name their owner chose over mDNS ("Sams-iPhone"), and
+  which arrives first is arbitrary. Not every device announces or answers a
+  name, so some will still only show a vendor or IP; that is reported as
+  unknown rather than guessed at, and those are the ones worth adding to an
+  aliases file.
   `Device.display_name` (exposed as `display_name` in the dashboard/JSON)
   is the single field everything else should read -- it already applies
   this fallback chain for you.
@@ -46,13 +51,25 @@ see [Roadmap](#roadmap).
   and idle-based finalization.
 - **Service Detection** (`service_detector.py`, `service_rules.py`):
   classifies each flow into a service + category using SNI/DNS-derived
-  hostnames matched against ~50 domain rules (`canvas.instructure.com` →
+  hostnames matched against the domain rules (`canvas.instructure.com` →
   Study, `youtube.com` → Entertainment, and generic `.edu`/`.edu.au` suffixes
   → Study all work out of the box), falling back to well-known ports, and finally to a
   pluggable local-LLM classifier for anything still unrecognized. SNI/DNS
   lookups are direction-independent -- a TCP conversation produces two Flow
   objects (one per direction), and both correctly resolve to the same
   service even though the SNI is only ever observed on the outbound packet.
+  The rules cover content-delivery domains as well as front doors, which
+  matters because that is where the bytes are: a YouTube session is one
+  request to `youtube.com` and then minutes of video from `googlevideo.com`.
+  Traffic nobody chose to generate (OS updates, telemetry, ad and analytics
+  endpoints) is categorised separately so it cannot be mistaken for time a
+  person decided to spend. With `--history-db`, learned IP → hostname
+  mappings are persisted, so a restart keeps recognising services instead
+  of relabelling them all as generic HTTPS until each device happens to
+  repeat a DNS lookup -- which client-side DNS caching can delay for hours.
+  QUIC/HTTP3 traffic (most Google, YouTube and Meta traffic now) carries no
+  readable SNI, so this DNS-derived mapping is the only thing identifying
+  it; that is why persisting it matters more than it first appears.
 - **AI Classification** (`llm_classifier.py`): the long-tail fallback. Talks
   to a locally hosted, open-source model via the [Ollama](https://ollama.com)
   HTTP API (`localhost:11434` by default) -- only ever called for domains the

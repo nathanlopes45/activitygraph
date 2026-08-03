@@ -90,6 +90,21 @@ class HistoryStore:
                 UNIQUE(device_ip, category, service, start_time)
             );
             CREATE INDEX IF NOT EXISTS idx_category_intervals_day ON category_intervals(local_day);
+
+            -- Learned IP -> hostname mappings, harvested from DNS answers.
+            --
+            -- Without this the mapping lives only in memory, so every
+            -- restart starts blind and classifies traffic by port until
+            -- each device happens to repeat a DNS lookup. Devices cache DNS
+            -- aggressively, so "happens to repeat" can mean hours -- and in
+            -- the meantime everything on 443 collapses into one generic
+            -- "HTTPS" bucket, which is exactly the breakdown the dashboard
+            -- exists to avoid.
+            CREATE TABLE IF NOT EXISTS dns_names (
+                ip TEXT PRIMARY KEY,
+                hostname TEXT NOT NULL,
+                last_seen TEXT NOT NULL
+            );
         """)
         self._migrate_category_intervals_service()
         self._conn.commit()
@@ -383,6 +398,38 @@ class HistoryStore:
 
     def session_count(self) -> int:
         return self._conn.execute("SELECT COUNT(*) FROM session_events").fetchone()[0]
+
+    # -- learned hostnames ---------------------------------------------------
+
+    def load_dns_names(self, max_age_days: int = 30) -> dict[str, str]:
+        """Every IP -> hostname mapping still worth trusting.
+
+        Old entries are dropped rather than returned: cloud and CDN
+        addresses get reassigned, so a months-old mapping is as likely to
+        mislabel a flow as to label it.
+        """
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).isoformat()
+        rows = self._conn.execute(
+            "SELECT ip, hostname FROM dns_names WHERE last_seen >= ?", (cutoff,))
+        return dict(rows)
+
+    def save_dns_names(self, mappings: dict[str, str]) -> None:
+        """Persist newly-learned mappings, newest answer winning."""
+        if not mappings:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        self._conn.executemany(
+            "INSERT INTO dns_names (ip, hostname, last_seen) VALUES (?, ?, ?) "
+            "ON CONFLICT(ip) DO UPDATE SET hostname=excluded.hostname, last_seen=excluded.last_seen",
+            [(ip, hostname, now) for ip, hostname in mappings.items()],
+        )
+        self._conn.commit()
+
+    def prune_dns_names(self, max_age_days: int = 30) -> int:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).isoformat()
+        cursor = self._conn.execute("DELETE FROM dns_names WHERE last_seen < ?", (cutoff,))
+        self._conn.commit()
+        return cursor.rowcount
 
     def close(self) -> None:
         self._conn.close()

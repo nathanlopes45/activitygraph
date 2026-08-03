@@ -477,6 +477,9 @@ class BackgroundCapture:
                 # extend on conflict, so recording an interval that is still
                 # growing is safe -- unlike sessions, which wait until closed.
                 self.history_store.record_time_from_pipeline(self.pipeline)
+                # Hostnames learned since the last tick, written here rather
+                # than per DNS answer to keep disk writes off the capture path.
+                self.pipeline.services.flush()
 
     def _record_closed_sessions(self) -> None:
         from datetime import datetime, timezone
