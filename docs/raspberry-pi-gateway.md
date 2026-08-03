@@ -299,15 +299,29 @@ systemctl is-active dnsmasq || sudo journalctl -u dnsmasq -n 20 --no-pager
 
 `active` means good. Anything else prints the reason.
 
-**Confirm it is listening on the right interface only:**
+**Confirm it is listening on the right interface only.** Use `ss`'s own port
+filter rather than grepping the text, which would also match unrelated ports
+such as 5353 and 53412:
 
 ```bash
-sudo ss -lnup | grep ':53'
+sudo ss -lnup 'sport = :53'
 ```
 
-You should see `192.168.50.1:53`. If you also see `0.0.0.0:53`, then
-`bind-interfaces` is not taking effect and the Pi is offering DNS to the
-upstream network too.
+Expect three lines, all belonging to `dnsmasq`:
+
+| Address | Meaning |
+|---|---|
+| `192.168.50.1:53` | The LAN side. This is the one that matters |
+| `127.0.0.1:53` | Loopback, so the Pi resolves names for itself. Normal |
+| `[::1]:53` | The IPv6 loopback equivalent. Also normal |
+
+Two things should **not** appear. `0.0.0.0:53` means `bind-interfaces` is not
+taking effect and the Pi is offering DNS to every network it touches. Your
+`eth0` address, the `192.168.1.x` one, means it is serving the upstream
+network, where a second DHCP and DNS server causes real problems.
+
+Anything on port 5353 is `avahi-daemon` doing mDNS. It is unrelated to this
+setup and can be ignored.
 
 <details>
 <summary><b>If dnsmasq fails to start with an "address already in use" error</b></summary>
