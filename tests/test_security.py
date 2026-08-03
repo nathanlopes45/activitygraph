@@ -99,8 +99,14 @@ def test_history_days_parameter_is_clamped(tmp_path):
     original = store.daily_totals
     store.daily_totals = lambda days=30: seen.append(days) or original(days=days)
 
-    endpoint(days=10**9)
-    endpoint(days=-5)
+    # /api/history takes the request so it can identify the caller when
+    # accounts are enabled. None are here, so the auth check is skipped.
+    class _Req:
+        client = None
+        cookies: dict = {}
+
+    endpoint(_Req(), days=10**9)
+    endpoint(_Req(), days=-5)
     assert max(seen) <= 3650
     assert min(seen) >= 1
     store.close()

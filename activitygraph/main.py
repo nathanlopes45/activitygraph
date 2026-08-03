@@ -63,12 +63,35 @@ class Pipeline:
             if flow.service is None:
                 self.services.apply(flow)
 
-    def sessions(self) -> list[Session]:
-        local_ips = {d.ip for d in self.devices.all_devices()}
+    def sessions(self, local_ips=None) -> list[Session]:
+        if local_ips is None:
+            local_ips = {d.ip for d in self.devices.all_devices()}
         return group_into_sessions(self.flows.all_flows(), local_ips, session_gap_seconds=self.session_gap_seconds)
 
-    def summary(self) -> dict:
+    def summary(self, visible_macs=None) -> dict:
+        """Everything the dashboard renders.
+
+        `visible_macs` limits the result to devices with those MAC addresses,
+        which is how a signed-in user is shown only the devices they have
+        claimed. Passing None means no restriction, used for the admin view
+        and for the CLI.
+        """
+        devices = self.devices.all_devices()
         flows = self.flows.all_flows()
+
+        # Restricting the *inputs* rather than filtering the finished payload
+        # is what makes per-user scoping safe. Every figure below is derived
+        # from `devices` and `flows`, so a panel added later is scoped
+        # automatically. Post-filtering the output would leak any field
+        # somebody forgot to add to the filter, which is exactly the kind of
+        # mistake that stays invisible until it matters.
+        if visible_macs is not None:
+            allowed = {m.upper() for m in visible_macs}
+            devices = [d for d in devices if (d.mac or "").upper() in allowed]
+            visible_ips = {d.ip for d in devices}
+            flows = [f for f in flows
+                     if f.src_ip in visible_ips or f.dst_ip in visible_ips]
+
         by_category: dict[str, dict] = {}
         for f in flows:
             cat = f.category or "Uncategorized"
@@ -80,14 +103,13 @@ class Pipeline:
         for bucket in by_category.values():
             bucket["services"] = sorted(bucket["services"])
 
-        devices = self.devices.all_devices()
         local_ips = {d.ip for d in devices}
 
         return {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "devices": [d.to_dict() for d in devices],
             "flows": [f.to_dict() for f in flows],
-            "sessions": [s.to_dict() for s in self.sessions()],
+            "sessions": [s.to_dict() for s in self.sessions(local_ips)],
             "category_breakdown": by_category,
             "ranked_devices": rank_devices(flows, devices),
             "ranked_services": rank_services(flows),

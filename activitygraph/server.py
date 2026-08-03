@@ -1,11 +1,23 @@
 """Dashboard stage: serves the Pipeline's data over a local HTTP API and
 hosts the single-page dashboard frontend.
 
-This is intentionally a *local-only* server -- it binds to 127.0.0.1 by
-default and has no auth, because the threat model is "my own browser, on
-my own machine," not "the internet." If you bind it to 0.0.0.0 to view it
-from another device on your LAN, that's a deliberate choice you're making,
-not the default.
+Binds to 127.0.0.1 by default. Binding wider (`--host 0.0.0.0`) so other
+devices can reach it is a deliberate choice, and the server warns when you
+make it.
+
+When an account store is supplied the API becomes multi-user: each signed-in
+person sees only the devices they have claimed, and an admin sees everything.
+Two rules carry the weight of that:
+
+  1. A device can only be claimed *from itself*. The claim endpoint resolves
+     the request's own source address to a device, so you cannot claim a
+     phone you are not holding.
+  2. Scoping happens inside `Pipeline.summary(visible_macs=...)`, which
+     restricts the inputs rather than filtering the finished payload, so a
+     panel added later is scoped automatically instead of leaking.
+
+Without an account store the API stays open, which is the right behaviour
+for a loopback-only single-user run.
 """
 from __future__ import annotations
 
@@ -16,13 +28,18 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI
+from fastapi import Body, FastAPI, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
+
+from .accounts import AccountError, AccountStore, issue_token, read_token
+
+SESSION_COOKIE = "activitygraph_session"
 
 WEBAPP_DIR = Path(__file__).parent / "webapp"
 
 
-def create_app(pipeline, live: bool = False, history_store=None, capture=None) -> FastAPI:
+def create_app(pipeline, live: bool = False, history_store=None, capture=None,
+               accounts: 'AccountStore | None' = None, secret: bytes = b"") -> FastAPI:
     """Build the FastAPI app around an existing Pipeline instance.
 
     In live mode, a background thread should already be feeding packets
@@ -35,20 +52,180 @@ def create_app(pipeline, live: bool = False, history_store=None, capture=None) -
     """
     app = FastAPI(title="ActivityGraph", docs_url="/api/docs")
 
+    def current_user(request: Request):
+        """The signed-in user, or None. Returns None whenever accounts are
+        disabled, which keeps the single-user local mode working unchanged."""
+        if accounts is None:
+            return None
+        token = request.cookies.get(SESSION_COOKIE)
+        if not token:
+            return None
+        user_id = read_token(token, secret)
+        return accounts.get_user(user_id) if user_id is not None else None
+
+    def visible_macs_for(user) -> "set[str] | None":
+        """Which devices this caller may see. None means no restriction.
+
+        Admins and the accounts-disabled case get None. Everyone else gets
+        exactly the devices they have claimed, so a new user sees nothing
+        until they claim something, rather than seeing the network by
+        default.
+        """
+        if accounts is None or (user is not None and user.is_admin):
+            return None
+        if user is None:
+            return set()
+        return accounts.macs_for_user(user.id)
+
+    def _set_session(response: Response, user_id: int) -> None:
+        response.set_cookie(
+            SESSION_COOKIE,
+            issue_token(user_id, secret),
+            httponly=True,      # not readable from JavaScript
+            samesite="lax",     # not sent on cross-site form posts
+            path="/",
+            max_age=30 * 24 * 3600,
+        )
+
+    def requesting_device(request: Request):
+        """Resolve the caller's own source address to a known device.
+
+        Deliberately uses the socket peer address and ignores X-Forwarded-For:
+        there is no proxy in front of this server, and trusting that header
+        would let any client claim to be any address, which is precisely the
+        check this is meant to perform.
+        """
+        client = request.client
+        if client is None:
+            return None
+        return pipeline.devices.get(client.host)
+
+    @app.get("/api/auth/state")
+    def auth_state(request: Request):
+        """What the UI needs before deciding whether to show a login form."""
+        if accounts is None:
+            return {"accounts_enabled": False, "authenticated": True, "user": None}
+        user = current_user(request)
+        return {
+            "accounts_enabled": True,
+            "authenticated": user is not None,
+            "user": user.to_dict() if user else None,
+            "any_accounts_exist": accounts.user_count() > 0,
+        }
+
+    @app.post("/api/auth/register")
+    def register(response: Response, payload: dict = Body(...)):
+        if accounts is None:
+            return JSONResponse({"error": "Accounts are not enabled."}, status_code=400)
+        try:
+            user = accounts.create_user(payload.get("username", ""), payload.get("password", ""))
+        except AccountError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        _set_session(response, user.id)
+        return {"user": user.to_dict()}
+
+    @app.post("/api/auth/login")
+    def login(response: Response, payload: dict = Body(...)):
+        if accounts is None:
+            return JSONResponse({"error": "Accounts are not enabled."}, status_code=400)
+        user = accounts.authenticate(payload.get("username", ""), payload.get("password", ""))
+        if user is None:
+            # One message for both causes, so this cannot be used to work out
+            # which usernames exist.
+            return JSONResponse({"error": "Incorrect username or password."}, status_code=401)
+        _set_session(response, user.id)
+        return {"user": user.to_dict()}
+
+    @app.post("/api/auth/logout")
+    def logout(response: Response):
+        response.delete_cookie(SESSION_COOKIE, path="/")
+        return {"ok": True}
+
+    @app.get("/api/me")
+    def me(request: Request):
+        user = current_user(request)
+        if user is None:
+            return JSONResponse({"error": "Not signed in."}, status_code=401)
+
+        claimed = accounts.macs_for_user(user.id)
+        by_mac = {(d.mac or "").upper(): d for d in pipeline.devices.all_devices()}
+        here = requesting_device(request)
+        here_mac = (here.mac or "").upper() if here is not None else None
+
+        return {
+            "user": user.to_dict(),
+            "devices": [
+                {"mac": mac,
+                 "ip": by_mac[mac].ip if mac in by_mac else None,
+                 "name": by_mac[mac].display_name() if mac in by_mac else None,
+                 "is_this_device": mac == here_mac}
+                for mac in sorted(claimed)
+            ],
+            "this_device": {
+                "mac": here_mac,
+                "name": here.display_name() if here is not None else None,
+                "claimed_by_you": here_mac in claimed if here_mac else False,
+                "recognised": here is not None,
+            },
+        }
+
+    @app.post("/api/claim")
+    def claim(request: Request):
+        """Claim the device this request came from, and only that device."""
+        user = current_user(request)
+        if user is None:
+            return JSONResponse({"error": "Not signed in."}, status_code=401)
+
+        device = requesting_device(request)
+        if device is None or not device.mac:
+            return JSONResponse(
+                {"error": "This device is not recognised on the network yet. "
+                          "It needs to have sent some traffic through the gateway first."},
+                status_code=404,
+            )
+
+        accounts.claim_device(user.id, device.mac)
+        return {"claimed": {"mac": device.mac.upper(), "name": device.display_name(),
+                            "ip": device.ip}}
+
+    @app.post("/api/unclaim")
+    def unclaim(request: Request, payload: dict = Body(...)):
+        user = current_user(request)
+        if user is None:
+            return JSONResponse({"error": "Not signed in."}, status_code=401)
+        mac = (payload.get("mac") or "").strip()
+        if not mac:
+            return JSONResponse({"error": "No device given."}, status_code=400)
+        if not accounts.release_device(user.id, mac):
+            # Covers both "not yours" and "not claimed", without revealing
+            # which, so this cannot be used to probe other people's devices.
+            return JSONResponse({"error": "That device is not in your group."}, status_code=404)
+        return {"released": mac.upper()}
+
     @app.get("/")
     def index():
         return FileResponse(WEBAPP_DIR / "index.html")
 
     @app.get("/api/summary")
-    def summary() -> JSONResponse:
-        data = pipeline.summary()
+    def summary(request: Request) -> JSONResponse:
+        user = current_user(request)
+        if accounts is not None and user is None:
+            return JSONResponse({"error": "Not signed in."}, status_code=401)
+
+        data = pipeline.summary(visible_macs=visible_macs_for(user))
         data["mode"] = "live" if live else "demo"
+        data["viewer"] = {
+            "user": user.to_dict() if user else None,
+            "sees_all_devices": visible_macs_for(user) is None,
+        }
         if capture is not None:
             data["capture"] = capture.status()
         return JSONResponse(data)
 
     @app.get("/api/history")
-    def history(days: int = 30) -> JSONResponse:
+    def history(request: Request, days: int = 30) -> JSONResponse:
+        if accounts is not None and current_user(request) is None:
+            return JSONResponse({"error": "Not signed in."}, status_code=401)
         # Bounded so a caller can't request an unbounded scan; the readers
         # pull rows into Python to union them, so the cost is real.
         days = max(1, min(days, 3650))
@@ -122,7 +299,8 @@ def reachable_urls(host: str, port: int) -> list[str]:
     return [f"http://{address}:{port}" for address in addresses]
 
 
-def serve(pipeline, live: bool = False, host: str = "127.0.0.1", port: int = 8420, open_browser: bool = True, history_store=None, capture=None) -> None:
+def serve(pipeline, live: bool = False, host: str = "127.0.0.1", port: int = 8420, open_browser: bool = True, history_store=None, capture=None,
+          accounts=None, secret: bytes = b"") -> None:
     """Blocking call: starts the dashboard server. Ctrl-C to stop."""
     import uvicorn
 
@@ -138,7 +316,8 @@ def serve(pipeline, live: bool = False, host: str = "127.0.0.1", port: int = 842
             file=sys.stderr,
         )
 
-    app = create_app(pipeline, live=live, history_store=history_store, capture=capture)
+    app = create_app(pipeline, live=live, history_store=history_store, capture=capture,
+                     accounts=accounts, secret=secret)
 
     urls = reachable_urls(host, port)
 
