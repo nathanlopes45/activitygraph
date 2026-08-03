@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from typing import Callable, Optional
 
 from scapy.all import get_if_list  # noqa: F401  (surface for CLI --list-interfaces)
-from scapy.all import ARP, DHCP, DNS, DNSRR, IP, TCP, UDP, Ether, conf, get_if_addr, sniff, srp
+from scapy.all import ARP, DHCP, DNS, DNSRR, IP, IPv6, TCP, UDP, Ether, conf, get_if_addr, sniff, srp
 from scapy.layers.netbios import NBNSQueryRequest, NBNSRegistrationRequest
 
 from .models import Packet
@@ -162,10 +162,21 @@ def _packet_to_normalized(scapy_pkt) -> Optional[Packet]:
             arp_sender_mac=arp.hwsrc,
         )
 
-    if not scapy_pkt.haslayer(IP):
+    # Both address families, because a dual-stack network carries real
+    # traffic over each and dropping one silently undercounts it. Modern
+    # phones and laptops prefer IPv6 wherever the network offers it, so on
+    # some networks the v6 half is the larger half.
+    if scapy_pkt.haslayer(IP):
+        ip_layer = scapy_pkt[IP]
+        next_header = ip_layer.proto
+        icmp_protocol = 1  # ICMP
+    elif scapy_pkt.haslayer(IPv6):
+        ip_layer = scapy_pkt[IPv6]
+        next_header = ip_layer.nh
+        icmp_protocol = 58  # ICMPv6
+    else:
         return None
 
-    ip_layer = scapy_pkt[IP]
     src_mac = getattr(scapy_pkt, "src", None) if scapy_pkt.name == "Ethernet" else None
     dst_mac = getattr(scapy_pkt, "dst", None) if scapy_pkt.name == "Ethernet" else None
 
@@ -198,13 +209,16 @@ def _packet_to_normalized(scapy_pkt) -> Optional[Packet]:
                 answers = []
                 for i in range(dns.ancount):
                     rr = dns.an[i]
-                    if isinstance(rr, DNSRR) and rr.type == 1:  # A record
+                    # A and AAAA. Skipping AAAA would leave every IPv6 flow
+                    # without a hostname, so it would fall through to the
+                    # port rule and land in the generic HTTPS bucket.
+                    if isinstance(rr, DNSRR) and rr.type in (1, 28):
                         answers.append(rr.rdata)
                 dns_answers = answers or None
         hint = _extract_hostname_hint(scapy_pkt, proto, src_port, dst_port)
         if hint is not None:
             hostname_hint, hostname_source = hint
-    elif ip_layer.proto == 1:
+    elif next_header == icmp_protocol:
         proto = "ICMP"
 
     return Packet(

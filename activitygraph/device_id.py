@@ -53,9 +53,21 @@ def _is_local_ip(ip: str) -> bool:
     remote server's real public address. Blindly pairing (src_ip, src_mac)
     from any packet would misidentify every remote server you talk to as
     a "device" wearing your router's MAC address.
+
+    Sufficient on its own for IPv4, where NAT guarantees every device here
+    holds a private address. Not sufficient for IPv6, where devices hold
+    globally routable addresses and this returns False for them; see
+    DeviceRegistry.observe, which falls back to the source MAC there.
     """
     try:
         return ipaddress.ip_address(ip).is_private
+    except ValueError:
+        return False
+
+
+def _is_ipv6(ip: str) -> bool:
+    try:
+        return ipaddress.ip_address(ip).version == 6
     except ValueError:
         return False
 
@@ -153,22 +165,65 @@ class DeviceRegistry:
         # Best name seen for each device and its score, keyed by MAC where
         # known so it survives a DHCP lease moving the device to a new IP.
         self._best_name: dict[str, tuple[str, int]] = {}
+        # MACs belonging to devices on this network, and MACs observed
+        # forwarding traffic from elsewhere. Both are needed to attribute
+        # IPv6, where a device's address looks identical to a server's.
+        self._local_macs: set[str] = set()
+        self._router_macs: set[str] = set()
 
     def observe(self, packet: Packet) -> None:
         now = packet.timestamp
 
         if packet.arp_sender_ip and packet.arp_sender_mac:
+            self._local_macs.add(_normalize_mac(packet.arp_sender_mac))
             self._touch(packet.arp_sender_ip, packet.arp_sender_mac, now,
                         packet.hostname_hint, packet.hostname_source)
             return
 
+        if not (packet.src_ip and packet.src_mac):
+            return
+        mac = _normalize_mac(packet.src_mac)
+
         # Fall back to source IP/MAC on any packet, which covers devices
-        # that never show up in ARP traffic during the capture window --
-        # but only for local IPs (see _is_local_ip). A remote server's IP
-        # paired with your router's MAC is not a device.
-        if packet.src_ip and packet.src_mac and _is_local_ip(packet.src_ip):
+        # that never show up in ARP traffic during the capture window.
+        if _is_local_ip(packet.src_ip):
+            self._local_macs.add(mac)
             self._touch(packet.src_ip, packet.src_mac, now,
                         packet.hostname_hint, packet.hostname_source)
+
+        elif not _is_ipv6(packet.src_ip):
+            # A public IPv4 source address cannot belong to anything on this
+            # side of the NAT, so this frame was forwarded and the source
+            # MAC belongs to whatever forwarded it. Recording the pair would
+            # invent a "device" for every server on the internet, all
+            # wearing the router's MAC.
+            self._note_router_mac(mac)
+
+        elif mac in self._local_macs and mac not in self._router_macs:
+            # IPv6 has no NAT: a device on this network holds a globally
+            # routable address of its own, so a public source address is not
+            # evidence of forwarding the way it is for IPv4. The MAC is what
+            # separates the two cases, and this one is already known to
+            # belong to a device here rather than to a router.
+            self._touch(packet.src_ip, packet.src_mac, now,
+                        packet.hostname_hint, packet.hostname_source)
+
+    def _note_router_mac(self, mac: str) -> None:
+        """Record a MAC seen forwarding traffic, and undo any damage it did.
+
+        Until the first forwarded packet arrives there is nothing to
+        distinguish a router from any other device, so IPv6 traffic seen
+        before that point may already have registered remote servers as
+        devices under this MAC. Those entries are dropped here rather than
+        left to linger, since they would otherwise persist for the whole
+        capture.
+        """
+        if mac in self._router_macs:
+            return
+        self._router_macs.add(mac)
+        for ip in [ip for ip, device in self._devices.items()
+                   if _normalize_mac(device.mac or "") == mac and not _is_local_ip(ip)]:
+            del self._devices[ip]
 
     def _touch(self, ip: str, mac: str, when: datetime, hostname_hint: Optional[str] = None,
                hostname_source: Optional[str] = None) -> None:

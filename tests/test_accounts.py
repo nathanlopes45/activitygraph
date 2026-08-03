@@ -97,6 +97,24 @@ def test_secret_is_created_once_and_reused(tmp_path):
     assert load_or_create_secret(path) == first, "sessions must survive a restart"
 
 
+def test_secret_with_whitespace_bytes_at_the_edges_survives_a_reload(tmp_path):
+    """The secret is random bytes, not text, so some fraction of installs
+    get one starting or ending with a byte that is ASCII whitespace.
+    Trimming it on read would load a different key than was written and
+    invalidate every existing session on restart."""
+    path = tmp_path / "secret.key"
+    written = b"\n " + b"k" * 28 + b" \t"
+    path.write_bytes(written)
+    assert load_or_create_secret(str(path)) == written
+
+
+def test_a_reloaded_secret_still_validates_existing_tokens(tmp_path):
+    """The consequence that matters, stated directly."""
+    path = str(tmp_path / "secret.key")
+    token = issue_token(7, load_or_create_secret(path))
+    assert read_token(token, load_or_create_secret(path)) == 7
+
+
 # ---------------- registration ----------------
 
 def test_first_user_becomes_admin(store):
