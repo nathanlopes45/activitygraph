@@ -330,7 +330,9 @@ usual reason a correct-looking setup reports nothing.
 See **[docs/raspberry-pi-gateway.md](docs/raspberry-pi-gateway.md)** for the
 full setup, including the one misconfiguration that silently ruins all
 per-device data (capturing the WAN side, post-NAT -- ActivityGraph now warns
-about it at startup).
+about it at startup). The same runbook is available as a printable PDF,
+**[docs/ActivityGraph-Gateway-Setup.pdf](docs/ActivityGraph-Gateway-Setup.pdf)**,
+which is easier to follow at the bench with the Pi in front of you.
 
 #### Why other devices show 0 bytes
 
@@ -817,6 +819,8 @@ activitygraph/
   main.py                 # CLI: wires it all together
 docs/
   raspberry-pi-gateway.md # full-network capture on a gateway
+  build_runbook.py        # renders the runbook below; needs the "docs" extra
+  ActivityGraph-Gateway-Setup.pdf   # the same runbook, printable
 examples/                 # configuration templates
 tests/                    # pytest suite (conftest.py puts the repo on sys.path)
 ```
