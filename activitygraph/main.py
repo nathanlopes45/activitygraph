@@ -257,6 +257,32 @@ def print_report(pipeline: Pipeline) -> None:
         print(f"  {cat:<20} {r['flow_count']:>3} flows  {_format_bytes(r['byte_count']):>10}   [{services}]")
 
 
+def _open_accounts(db_path: str | None, secret_path: str | None):
+    """Open the account store and its signing key, or (None, b"") if
+    accounts are switched off.
+
+    The key sits beside the database by default and is generated on first
+    use. Both live outside the repo, under the user's home directory, so a
+    clone never ships with someone else's accounts or a shared key.
+    """
+    if not db_path:
+        return None, b""
+
+    import sqlite3
+
+    from .accounts import AccountStore, load_or_create_secret
+
+    resolved = Path(db_path).expanduser()
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    secret = load_or_create_secret(secret_path or str(resolved.with_suffix(".key")))
+    accounts = AccountStore(sqlite3.connect(str(resolved), check_same_thread=False))
+
+    if accounts.user_count() == 0:
+        print(f"[activitygraph] Accounts enabled ({resolved}). No accounts exist yet -- "
+              "the first one registered from the dashboard becomes the admin.")
+    return accounts, secret
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="ActivityGraph backend core: capture -> devices + flows.")
     mode = parser.add_mutually_exclusive_group(required=True)
@@ -339,6 +365,16 @@ def main() -> None:
                               "{\"brand\": \"tplink\", \"host\": \"192.168.1.1\", \"username\": \"admin\", "
                               "\"password\": \"...\"}. Kept in its own file (not a CLI argument) so the "
                               "password never lands in shell history. Currently supported brands: tplink.")
+    parser.add_argument("--accounts", nargs="?", const="~/.activitygraph/accounts.db", default=None,
+                         metavar="PATH",
+                         help="Require sign-in, and show each account only the devices it has claimed "
+                              "(--serve mode). The first account registered becomes the admin and sees "
+                              "every device. Everyone else starts with none and claims their own, which "
+                              "they can only do from the device itself. Turn this on before binding to "
+                              "anything beyond localhost.")
+    parser.add_argument("--accounts-secret", default=None, metavar="PATH",
+                         help="Where the session-signing key lives (default: alongside --accounts). "
+                              "Deleting it signs everyone out.")
     args = parser.parse_args()
 
     if args.arp_sweep and args.demo:
@@ -383,13 +419,14 @@ def main() -> None:
         from .storage import HistoryStore
 
         history_store = HistoryStore(args.history_db) if args.history_db else None
+        accounts, secret = _open_accounts(args.accounts, args.accounts_secret)
 
         if args.serve_source == "demo":
             pipeline = run_demo(idle_timeout=args.idle_timeout, llm_classifier=llm_classifier, session_gap_seconds=args.session_gap, device_aliases=device_aliases, active_resolve=args.active_resolve, device_groups=device_groups, min_activity_seconds=args.min_activity_seconds, taxonomy=taxonomy)
             if history_store is not None:
                 history_store.record_sessions_from_summary(pipeline.summary())
                 history_store.record_time_from_pipeline(pipeline)
-            serve(pipeline, live=False, host=args.host, port=args.port, open_browser=not args.no_browser, history_store=history_store)
+            serve(pipeline, live=False, host=args.host, port=args.port, open_browser=not args.no_browser, history_store=history_store, accounts=accounts, secret=secret)
         else:
             # The history database doubles as the learned IP -> hostname
             # store, so a restarted gateway keeps recognising services it
@@ -403,7 +440,7 @@ def main() -> None:
             except PermissionError:
                 print("Live capture requires elevated privileges (try running with sudo).", file=sys.stderr)
                 sys.exit(1)
-            serve(pipeline, live=True, host=args.host, port=args.port, open_browser=not args.no_browser, history_store=history_store, capture=capture)
+            serve(pipeline, live=True, host=args.host, port=args.port, open_browser=not args.no_browser, history_store=history_store, capture=capture, accounts=accounts, secret=secret)
         return
     else:
         parser.error("no mode selected")

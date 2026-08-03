@@ -39,6 +39,14 @@ taxonomy.json
 llm_cache.json
 *.leases
 
+# Account database and its session-signing key. These default to
+# ~/.activitygraph/, outside the repo, but --accounts takes a path and
+# nothing stops it pointing here. The database holds password hashes and
+# the key can mint a session for any account.
+accounts.db
+accounts.key
+*.key
+
 # Editors / OS
 .vscode/
 .idea/

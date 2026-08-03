@@ -304,15 +304,18 @@ def serve(pipeline, live: bool = False, host: str = "127.0.0.1", port: int = 842
     """Blocking call: starts the dashboard server. Ctrl-C to stop."""
     import uvicorn
 
-    if not _is_loopback(host):
-        # The API has no authentication -- the threat model is "my own browser
-        # on my own machine". Binding beyond loopback publishes everyone's
-        # browsing history to anyone who can reach the port, which is a
-        # legitimate choice on a trusted LAN but should never happen silently.
+    if not _is_loopback(host) and accounts is None:
+        # Without accounts the API is unauthenticated -- the threat model is
+        # "my own browser on my own machine". Binding beyond loopback then
+        # publishes everyone's browsing history to anyone who can reach the
+        # port, which is a legitimate choice on a trusted LAN but should
+        # never happen silently. With --accounts the warning would be false,
+        # since every endpoint requires a session.
         print(
             f"[activitygraph] Warning: binding {host}:{port}, which is reachable beyond this "
             f"machine. The dashboard has no authentication, so anyone who can reach that address "
-            f"can read every device's browsing activity. Use 127.0.0.1 unless you intend this.",
+            f"can read every device's browsing activity. Use 127.0.0.1, or turn on --accounts, "
+            f"unless you intend this.",
             file=sys.stderr,
         )
 
