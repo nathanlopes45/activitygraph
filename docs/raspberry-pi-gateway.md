@@ -203,11 +203,17 @@ bypass NAT and therefore bypass measurement.
 
 `sudo nmtui` offers the same thing as an interactive menu.
 
-**dhcpcd (older images only)**, appended to `/etc/dhcpcd.conf`:
+**dhcpcd (older images only).** Copy and paste this whole block, including
+the final `EOF` line. It appends to the file rather than replacing it:
 
-```
+```bash
+sudo tee -a /etc/dhcpcd.conf > /dev/null <<'EOF'
+
 interface eth1
 static ip_address=192.168.50.1/24
+EOF
+
+sudo systemctl restart dhcpcd
 ```
 
 Verify, whichever path you took:
@@ -250,22 +256,78 @@ are configured regardless.
 
 ### 5. DHCP and DNS
 
-`/etc/dnsmasq.d/activitygraph.conf`:
-```
+`dnsmasq` does two jobs here. As a **DHCP server** it hands each device an
+address on the Pi's subnet and tells it to use the Pi as its gateway, which
+is what routes traffic through the capture. As a **DNS forwarder** it
+resolves names on their behalf.
+
+**Create the config.** Copy and paste this entire block, including the final
+`EOF` line. It writes the file in one go, so there is no editor to learn:
+
+```bash
+sudo tee /etc/dnsmasq.d/activitygraph.conf > /dev/null <<'EOF'
+# Serve only on the LAN side. Never on eth0, which faces the upstream router.
 interface=eth1
 bind-interfaces
+
+# Addresses handed to your devices. Leave .1 to .49 free for fixed addresses
+# such as the Pi itself (.1) and the access point (.2).
 dhcp-range=192.168.50.50,192.168.50.200,12h
+
+# Tell clients the Pi is their gateway and DNS server.
+dhcp-option=option:router,192.168.50.1
+dhcp-option=option:dns-server,192.168.50.1
+
 domain=lan
 log-queries
 log-facility=/var/log/dnsmasq.log
+EOF
 ```
+
+**Apply it:**
 
 ```bash
 sudo systemctl restart dnsmasq
 ```
 
-`bind-interfaces` keeps dnsmasq off `eth0`, so the Pi never offers DHCP or
-DNS to the upstream network.
+**Verify it started.** This is worth checking rather than assuming, because
+a config error makes dnsmasq exit rather than run with defaults:
+
+```bash
+systemctl is-active dnsmasq || sudo journalctl -u dnsmasq -n 20 --no-pager
+```
+
+`active` means good. Anything else prints the reason.
+
+**Confirm it is listening on the right interface only:**
+
+```bash
+sudo ss -lnup | grep ':53'
+```
+
+You should see `192.168.50.1:53`. If you also see `0.0.0.0:53`, then
+`bind-interfaces` is not taking effect and the Pi is offering DNS to the
+upstream network too.
+
+<details>
+<summary><b>If dnsmasq fails to start with an "address already in use" error</b></summary>
+
+Another process holds port 53, usually `systemd-resolved`. Check and disable
+it:
+
+```bash
+sudo ss -lnup | grep ':53'
+sudo systemctl disable --now systemd-resolved
+sudo systemctl restart dnsmasq
+```
+
+</details>
+
+Two settings are load-bearing. `bind-interfaces` keeps dnsmasq off `eth0`, so
+the Pi never offers DHCP or DNS to the upstream network, where a second DHCP
+server would cause real problems. The `option:router` line is what makes
+devices route through the Pi at all: without it they may be handed the wrong
+gateway and bypass the capture entirely.
 
 **This also solves device naming, on any router.** As the DHCP server, the Pi
 receives each device's self-reported hostname (DHCP option 12) in its lease
@@ -296,27 +358,77 @@ useful cross-check against what ActivityGraph classifies.
 
 ### 6. Routing and NAT
 
+Two separate things are needed here, and the Pi does neither by default.
+
+**Forwarding** lets the Pi pass packets between its two interfaces. Linux
+refuses to do this out of the box, because a normal computer should not
+silently relay other machines' traffic.
+
+**NAT (masquerade)** rewrites outgoing packets to appear to come from the
+Pi. The upstream router only knows about the Pi, not the `192.168.50.x`
+devices behind it, so without this their replies have nowhere to return to.
+
+**Enable forwarding**, permanently across reboots:
+
 ```bash
 echo 'net.ipv4.ip_forward=1' | sudo tee /etc/sysctl.d/99-activitygraph.conf
 sudo sysctl -p /etc/sysctl.d/99-activitygraph.conf
 ```
 
-`/etc/nftables.conf`:
+That should print `net.ipv4.ip_forward = 1`. Confirm it took effect:
+
+```bash
+cat /proc/sys/net/ipv4/ip_forward     # expect 1
 ```
+
+**Back up any existing firewall rules** before overwriting them:
+
+```bash
+[ -f /etc/nftables.conf ] && sudo cp /etc/nftables.conf /etc/nftables.conf.backup
+```
+
+**Write the ruleset.** Copy and paste the whole block including the final
+`EOF`:
+
+```bash
+sudo tee /etc/nftables.conf > /dev/null <<'EOF'
+#!/usr/sbin/nft -f
+flush ruleset
+
 table inet filter {
+  # Allow traffic to pass between eth1 (devices) and eth0 (internet).
   chain forward { type filter hook forward priority 0; policy accept; }
 }
+
 table ip nat {
   chain postrouting {
     type nat hook postrouting priority 100; policy accept;
+    # Rewrite outgoing packets to come from the Pi's WAN address.
     oifname "eth0" masquerade
   }
 }
+EOF
 ```
+
+**Apply it, and make it load on boot:**
 
 ```bash
 sudo systemctl enable --now nftables
 ```
+
+**Verify the rules actually loaded.** `enable --now` reporting success does
+not guarantee the file parsed:
+
+```bash
+systemctl is-active nftables || sudo journalctl -u nftables -n 20 --no-pager
+sudo nft list ruleset
+```
+
+The output of the last command should contain both the `forward` chain and
+the `masquerade` line. An empty ruleset means the file did not parse.
+
+Nothing will route yet, because no devices are connected. You test this for
+real at the end of step 8.
 
 ### 7. The access point
 
@@ -372,7 +484,53 @@ Open `http://192.168.50.1:8420` from any device on the network.
 
 ### 9. Run it permanently
 
-`/etc/systemd/system/activitygraph.service`:
+Set a variable to your project root first, so the paths below are filled in
+for you rather than edited by hand:
+
+```bash
+AG=$(dirname "$(find ~ -name pyproject.toml -not -path '*/.venv/*' | head -1)")
+echo "$AG"        # sanity check: this is your project root
+```
+
+Then paste the whole block, including the final `EOF`:
+
+```bash
+sudo tee /etc/systemd/system/activitygraph.service > /dev/null <<EOF
+[Unit]
+Description=ActivityGraph
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=$AG
+ExecStart=$AG/.venv/bin/python -m activitygraph.main --serve --serve-source live -i eth1 --host 0.0.0.0 --no-browser --dhcp-leases --device-groups $AG/groups.json --history-db $AG/history.db
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+Two deliberate choices in that block. It uses `<<EOF` rather than `<<'EOF'`
+so `$AG` is replaced with your real path as the file is written. And
+`ExecStart` is one long line rather than using backslash continuations,
+because a backslash inside an unquoted heredoc is consumed by the shell
+before systemd ever sees it, which produces a mangled command.
+
+Check the result before enabling it:
+
+```bash
+cat /etc/systemd/system/activitygraph.service
+```
+
+Every path should be absolute and start with `/home/`, with no `$AG` or `~`
+left in the file.
+
+For reference, the file it produces looks like this:
+
 ```ini
 [Unit]
 Description=ActivityGraph
