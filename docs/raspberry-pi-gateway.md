@@ -441,6 +441,18 @@ sudo nft list ruleset
 The output of the last command should contain both the `forward` chain and
 the `masquerade` line. An empty ruleset means the file did not parse.
 
+The printed ruleset will not match your file character for character, and
+that is expected:
+
+| You wrote | nft displays |
+|---|---|
+| `priority 0` | `priority filter` |
+| `priority 100` | `priority srcnat` |
+
+Those are the symbolic names for those numeric priorities. Your comments are
+also absent, because nftables does not retain them in the loaded ruleset.
+Neither indicates a problem.
+
 Nothing will route yet, because no devices are connected. You test this for
 real at the end of step 8.
 
