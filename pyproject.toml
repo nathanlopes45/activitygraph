@@ -29,6 +29,9 @@ dependencies = [
 # Not required on a gateway deployment, where --dhcp-leases supersedes it.
 router = ["tplinkrouterc6u>=5.0"]
 dev = ["pytest>=8.0"]
+# Only needed to regenerate docs/ActivityGraph-Gateway-Setup.pdf from
+# docs/build_runbook.py. The PDF is committed, so this is not needed to read it.
+docs = ["reportlab>=4.0"]
 
 [project.scripts]
 activitygraph = "activitygraph.main:main"

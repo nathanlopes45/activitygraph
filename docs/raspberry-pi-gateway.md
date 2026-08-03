@@ -201,6 +201,15 @@ the default route is by definition the WAN side. `ipv6.method disabled`
 keeps the LAN single-stack, so devices cannot pick up IPv6 routes that
 bypass NAT and therefore bypass measurement.
 
+ActivityGraph does capture IPv6 where it is present, so this is belt and
+braces rather than the only defence. It still matters here: step 6 sets up
+forwarding and NAT for IPv4 only, so a device that obtained a working IPv6
+route would be routing around the Pi rather than through it, and traffic
+that never crosses the gateway cannot be measured no matter what the
+capture layer supports. Single-stack keeps that from arising. The practical
+consequence is that you should expect to see no IPv6 traffic on this build,
+which is the intended outcome and not a fault.
+
 `sudo nmtui` offers the same thing as an interactive menu.
 
 **dhcpcd (older images only).** Copy and paste this whole block, including
@@ -526,18 +535,59 @@ sudo .venv/bin/python -m activitygraph.main \
   --serve --serve-source live -i eth1 \
   --host 0.0.0.0 --no-browser \
   --dhcp-leases \
-  --device-groups ~/groups.json \
+  --accounts ~/activitygraph/accounts.db \
   --history-db ~/activitygraph/history.db
 ```
 
 - `-i eth1` is the LAN side. **Not `eth0`.** See the warning at the top.
 - `--dhcp-leases` names and registers every device from the lease table. With
   no value it probes the usual dnsmasq locations; pass a path to override.
-- `--host 0.0.0.0` is needed to reach the dashboard from another machine, but
-  it exposes an unauthenticated dashboard to everyone on the LAN. That is a
-  deliberate choice, not a default. ActivityGraph warns when you do it.
+- `--host 0.0.0.0` is needed to reach the dashboard from another machine. It
+  also publishes it to everyone on the LAN, which is why `--accounts` is on
+  the line above. Without accounts the dashboard is unauthenticated and
+  anyone who can reach the port can read every device's browsing history;
+  ActivityGraph warns when you do that.
+- `--accounts` requires people to sign in and shows each of them only the
+  devices they have claimed. See the next section before you open the
+  dashboard to anyone else.
+- `--history-db` stores day-over-day totals, and doubles as the store for
+  hostnames learned from DNS. Both matter more on a gateway than on a
+  laptop: the service breakdown gets better the longer it runs, and without
+  the database it starts blind after every reboot.
+
+`--device-groups` is deliberately absent now that accounts exist. Either
+works, and the two overlap: groups are a file you maintain by MAC, accounts
+let people assemble their own. Add `--device-groups ~/groups.json` back if
+you would rather do it centrally.
 
 Open `http://192.168.50.1:8420` from any device on the network.
+
+#### Sign in and claim your devices
+
+The first account created becomes the admin and can see every device on the
+network. **Create it yourself, now, before anyone else opens the
+dashboard.** There is no other gate: whoever registers first gets the
+network-wide view.
+
+After that, each person registers their own account and starts out seeing
+nothing. They add a device by opening the dashboard **on that device** and
+pressing "Claim this device" in the My Devices panel. Claiming is checked
+against the connection's own source address, so a phone can only be added
+from the phone. That is what makes the whole thing safe to hand out: nobody
+can attach a device they are not holding, and nobody has to be told anyone
+else's MAC address.
+
+A device belongs to one person at a time. Shared devices such as a TV are
+usually left unclaimed, which leaves them visible to the admin only.
+
+The command above gives the account database an explicit path so the service
+in step 9 uses the same one. Left bare, `--accounts` defaults to
+`~/.activitygraph/`, which resolves to root's home under `sudo`, and you
+would find yourself registering all over again once the service took over.
+
+The session key sits beside the database; deleting it signs everyone out. If
+you forget the admin password, delete both files and register again, which
+discards all accounts and claims but leaves captured history untouched.
 
 ### 9. Run it permanently
 
@@ -562,7 +612,7 @@ Wants=network-online.target
 Type=simple
 User=root
 WorkingDirectory=$AG
-ExecStart=$AG/.venv/bin/python -m activitygraph.main --serve --serve-source live -i eth1 --host 0.0.0.0 --no-browser --dhcp-leases --device-groups $AG/groups.json --history-db $AG/history.db
+ExecStart=$AG/.venv/bin/python -m activitygraph.main --serve --serve-source live -i eth1 --host 0.0.0.0 --no-browser --accounts $AG/accounts.db --dhcp-leases --history-db $AG/history.db
 Restart=always
 RestartSec=10
 
@@ -600,7 +650,7 @@ User=root
 WorkingDirectory=/opt/activitygraph
 ExecStart=/opt/activitygraph/.venv/bin/python -m activitygraph.main \
   --serve --serve-source live -i eth1 --host 0.0.0.0 --no-browser \
-  --dhcp-leases --device-groups /opt/activitygraph/groups.json \
+  --accounts /opt/activitygraph/accounts.db --dhcp-leases \
   --history-db /opt/activitygraph/history.db
 Restart=always
 RestartSec=10
@@ -633,15 +683,20 @@ systemctl is-active activitygraph || journalctl -u activitygraph -n 30
 
 ## Verify
 
-1. Connect a phone to the access point's Wi-Fi.
-2. `cat /var/lib/misc/dnsmasq.leases` shows the phone with its hostname.
-3. `ip route` on the phone, or its Wi-Fi details screen, shows a
+1. Open `http://192.168.50.1:8420` and register the admin account, before
+   anything else reaches it.
+2. Connect a phone to the access point's Wi-Fi.
+3. `cat /var/lib/misc/dnsmasq.leases` shows the phone with its hostname.
+4. `ip route` on the phone, or its Wi-Fi details screen, shows a
    `192.168.50.x` address with `192.168.50.1` as the gateway. If it shows a
    `192.168.1.x` address, it is talking to the upstream router and bypassing
    the Pi entirely.
-4. Browse something distinctive on the phone, such as YouTube.
-5. Dashboard, **Where Your Time Went**, shows Entertainment, Video, YouTube,
+5. Browse something distinctive on the phone, such as YouTube.
+6. Dashboard, **Where Your Time Went**, shows Entertainment, Video, YouTube,
    and the phone appears in **Time by Person** with real minutes.
+7. On the phone itself, open the dashboard, register a second account, and
+   press "Claim this device". That account should then see the phone and
+   nothing else.
 
 If the phone shows 0m, work through these in order:
 
@@ -652,6 +707,10 @@ If the phone shows 0m, work through these in order:
 | Leases fine, no traffic | Capturing the wrong interface. Must be `eth1` |
 | Everything attributed to one IP | Capturing `eth0` post-NAT, or `eth0`/`eth1` swapped after a reboot. Check the udev rule in step 2 |
 | Traffic but no categories | Flows classify on close, so allow about `--idle-timeout` seconds |
+| Signed in, but every panel empty | A non-admin account sees only what it has claimed. Claim the device you are on |
+| Lots of traffic filed as plain "HTTPS" | Services are identified from DNS, which the Pi only sees once devices start querying it. It fills in over the first few minutes, and `--history-db` keeps it across reboots |
+| Everyone logged out after a reboot | The session key moved or was deleted. With `--accounts PATH` it lives beside that path |
+| No IPv6 anywhere | Expected. The LAN is single-stack by design; see step 4 |
 
 ---
 
@@ -681,6 +740,11 @@ captured normally.
 - **Device-to-device traffic may bypass the Pi.** A phone casting to a TV
   where both sit on the same access point is switched locally and never
   reaches the gateway. Only traffic crossing the Pi is visible.
+- **The admin account sees everyone's activity.** Accounts stop household
+  members reading each other's browsing; they do not hide anything from
+  whoever holds the admin login, or from anyone with shell access to the Pi.
+  If you are setting this up for other people, tell them that rather than
+  letting them assume otherwise.
 - **Rollback is easy.** Re-enable the upstream router's Wi-Fi, reconnect
   devices to it, and power the Pi off. Nothing about either router was
   permanently changed.

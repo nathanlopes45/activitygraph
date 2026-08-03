@@ -1,0 +1,13 @@
+# Normalise line endings for text, so the repo stays consistent regardless of
+# which platform a contributor is on.
+* text=auto
+
+# Binary files must never be line-ending converted. With core.autocrlf=true on
+# Windows, Git's auto-detection is not reliable enough to trust here: a single
+# CRLF rewrite inside a PDF corrupts it, and the damage only shows up on a
+# fresh clone rather than for whoever committed it.
+*.pdf binary
+*.png binary
+*.jpg binary
+*.ico binary
+*.db binary
