@@ -53,10 +53,43 @@ LIGHT_FILTER = (
     " or (tcp and tcp[tcpflags] & (tcp-syn|tcp-fin|tcp-rst) != 0)"
     " or (tcp and (port 443 or port 8443)"
     " and tcp[((tcp[12:1] & 0xf0) >> 2):1] = 0x16)"
+    # Plain HTTP requests, matched on the method at the start of the
+    # payload. The Host header follows a few bytes later and is the only
+    # thing naming an unencrypted request, so without this every plain
+    # HTTP connection would be unidentifiable in light mode. GET and POST
+    # cover browsing; the rarer methods are not worth the instructions.
+    " or (tcp and (port 80 or port 8080)"
+    " and (tcp[((tcp[12:1] & 0xf0) >> 2):4] = 0x47455420"
+    " or tcp[((tcp[12:1] & 0xf0) >> 2):4] = 0x504f5354))"
     " or (udp and port 443 and less 400)"
 )
 
 CAPTURE_MODES = {"full": FULL_FILTER, "light": LIGHT_FILTER}
+
+
+def local_hardware_addresses() -> set:
+    """Every MAC belonging to this machine's own interfaces.
+
+    On a gateway the capturing machine is infrastructure, not something
+    anyone browses on, so its own traffic (DNS it forwards, the dashboard
+    it serves, its own updates) is noise in a list of household devices.
+    Matching on MAC rather than address catches it under every address it
+    holds, including the upstream one it answers on over the LAN.
+    """
+    addresses = set()
+    try:
+        from scapy.all import get_if_hwaddr
+
+        for interface in get_if_list():
+            try:
+                mac = get_if_hwaddr(interface)
+            except Exception:
+                continue  # interface with no hardware address, e.g. loopback
+            if mac and mac != "00:00:00:00:00:00":
+                addresses.add(mac.upper())
+    except Exception:
+        pass
+    return addresses
 
 
 def validate_bpf_filter(expression: str) -> Optional[str]:
@@ -113,6 +146,37 @@ def _extract_tls_sni(raw_payload: bytes) -> Optional[str]:
             pos += 4 + ext_len
     except Exception:
         return None
+    return None
+
+
+_HTTP_METHODS = (b"GET ", b"POST ", b"HEAD ", b"PUT ", b"DELETE ",
+                 b"OPTIONS ", b"PATCH ", b"CONNECT ", b"TRACE ")
+
+
+def _extract_http_host(raw_payload: bytes) -> Optional[str]:
+    """The Host header of a plaintext HTTP request.
+
+    The HTTPS equivalent of this is the SNI, which is already read. Plain
+    HTTP had nothing, so every unencrypted request fell through to the port
+    rule and collapsed into one "HTTP" bucket, even though the hostname is
+    sitting in the clear a few bytes into the request.
+
+    Only request headers are parsed, never a body or a response, so this
+    reads no more of the conversation than the SNI path does.
+    """
+    if not raw_payload.startswith(_HTTP_METHODS):
+        return None
+    # Headers end at the first blank line; anything past that is a body.
+    head = raw_payload.split(b"\r\n\r\n", 1)[0]
+    for line in head.split(b"\r\n")[1:]:
+        if not line.lower().startswith(b"host:"):
+            continue
+        host = line.split(b":", 1)[1].strip()
+        # "example.com:8080" -- the port is not part of the name.
+        if host.count(b":") == 1:
+            host = host.rsplit(b":", 1)[0]
+        name = host.decode("ascii", errors="ignore").strip().rstrip(".")
+        return name or None
     return None
 
 
@@ -285,6 +349,11 @@ def _packet_to_normalized(scapy_pkt) -> Optional[Packet]:
             raw = bytes(tcp.payload)
             if dst_port == 443 or src_port == 443:
                 tls_sni = _extract_tls_sni(raw)
+            elif dst_port in (80, 8080) or src_port in (80, 8080):
+                # Carried in the same field as the SNI: both are just "the
+                # hostname this connection is for", and everything
+                # downstream treats them identically.
+                tls_sni = _extract_http_host(raw)
     elif scapy_pkt.haslayer(UDP):
         proto = "UDP"
         udp = scapy_pkt[UDP]

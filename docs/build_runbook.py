@@ -701,6 +701,12 @@ table([
      "Requires people to sign in, and shows each of them only the devices "
      "they have claimed. Without it the dashboard is unauthenticated and "
      "anyone who can reach the port can read every device's history."],
+    ["<font face='Courier'>--exclude-self</font>",
+     "Keeps the Pi out of the device list. It forwards everyone's traffic but "
+     "is nobody's device, and otherwise appears more than once: under its LAN "
+     "address, and again under its upstream address, which it answers on when "
+     "you open the dashboard by that address from the LAN side. Leave it off "
+     "on a laptop capturing its own traffic."],
     ["<font face='Courier'>--capture-mode light</font>",
      "Close to mandatory on a Pi. Every packet the capture filter admits is "
      "copied into Python and taken apart by scapy, which costs far more per "
@@ -791,7 +797,7 @@ Wants=network-online.target
 Type=simple
 User=root
 WorkingDirectory=$AG
-ExecStart=$AG/.venv/bin/python -m activitygraph.main --serve --serve-source live -i eth1 --host 0.0.0.0 --no-browser --capture-mode light --accounts $AG/accounts.db --dhcp-leases --history-db $AG/history.db
+ExecStart=$AG/.venv/bin/python -m activitygraph.main --serve --serve-source live -i eth1 --host 0.0.0.0 --no-browser --capture-mode light --exclude-self --accounts $AG/accounts.db --dhcp-leases --history-db $AG/history.db
 Restart=always
 RestartSec=10
 

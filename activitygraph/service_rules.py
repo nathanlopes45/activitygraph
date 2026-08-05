@@ -241,7 +241,11 @@ PORT_RULES: dict[int, tuple[str, str]] = {
     53: ("DNS", "Infrastructure"),
     67: ("DHCP", "Infrastructure"),
     68: ("DHCP", "Infrastructure"),
-    80: ("HTTP", "Web Browsing"),
+    # Named so the two fallbacks are distinguishable at a glance. Reaching
+    # this rule at all means no hostname was recovered, which for plain HTTP
+    # is unusual: the Host header is in the clear, so most requests are
+    # identified by name and never land here.
+    80: ("HTTP (unencrypted)", "Web Browsing"),
     123: ("NTP", "System"),
     143: ("IMAP", "Communication"),
     179: ("BGP", "Infrastructure"),
@@ -258,7 +262,7 @@ PORT_RULES: dict[int, tuple[str, str]] = {
     5060: ("SIP (VoIP)", "Communication"),
     5222: ("XMPP", "Communication"),
     5353: ("mDNS", "Infrastructure"),
-    8080: ("HTTP (alt)", "Web Browsing"),
+    8080: ("HTTP (unencrypted, alt port)", "Web Browsing"),
     8443: ("HTTPS (alt)", "Web Browsing"),
 }
 

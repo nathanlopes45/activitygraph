@@ -317,3 +317,69 @@ def test_protocol_names_are_refused_even_from_a_registration(name):
               / UDP(sport=137, dport=137)
               / NBNSHeader() / NBNSRegistrationRequest(QUESTION_NAME=name))
     assert _extract_hostname_hint(Ether(bytes(packet)), "UDP", 137, 137) is None
+
+
+# ---------------- plaintext HTTP ----------------
+
+# HTTPS is identified by its SNI. Plain HTTP had no equivalent, so every
+# unencrypted request fell through to the port rule, even though the
+# hostname sits in the clear a few bytes into the request.
+
+@pytest.mark.parametrize("request_bytes,expected", [
+    (b"GET /watch?v=x HTTP/1.1\r\nHost: www.youtube.com\r\nAccept: */*\r\n\r\n",
+     "www.youtube.com"),
+    (b"POST /submit HTTP/1.1\r\nHost: example.com\r\n\r\nfield=1", "example.com"),
+    # A port in the Host header is not part of the name.
+    (b"GET / HTTP/1.1\r\nHost: example.com:8080\r\n\r\n", "example.com"),
+    # Header names are case-insensitive.
+    (b"GET / HTTP/1.1\r\nhost: lower.example\r\n\r\n", "lower.example"),
+])
+def test_the_host_header_names_the_service(request_bytes, expected):
+    from activitygraph.collector import _extract_http_host
+
+    assert _extract_http_host(request_bytes) == expected
+
+
+@pytest.mark.parametrize("payload", [
+    b"GET / HTTP/1.1\r\nUser-Agent: x\r\n\r\n",          # no Host header
+    b"HTTP/1.1 200 OK\r\nHost: notarequest\r\n\r\n",     # a response, not a request
+    b"\x16\x03\x01\x00\x50binary",                        # TLS, not HTTP
+    b"",
+])
+def test_non_requests_yield_no_host(payload):
+    from activitygraph.collector import _extract_http_host
+
+    assert _extract_http_host(payload) is None
+
+
+def test_a_host_header_in_a_body_is_not_read():
+    """Only the request headers are parsed. A body could contain anything,
+    including something that looks like a header."""
+    from activitygraph.collector import _extract_http_host
+
+    payload = (b"POST /f HTTP/1.1\r\nHost: real.example\r\n\r\n"
+               b"Host: attacker.example\r\n")
+    assert _extract_http_host(payload) == "real.example"
+
+
+def test_an_http_request_carries_its_hostname_through_the_collector():
+    from activitygraph.collector import _packet_to_normalized
+
+    frame = (_frame() / IP(src=LAN, dst=WAN) / TCP(sport=5000, dport=80, flags="PA")
+             / Raw(b"GET / HTTP/1.1\r\nHost: neverssl.com\r\n\r\n"))
+    assert _packet_to_normalized(Ether(bytes(frame))).tls_sni == "neverssl.com"
+
+
+@pytest.mark.parametrize("method", [b"GET", b"POST"])
+def test_light_mode_still_sees_http_requests(method):
+    """Without this the Host header never reaches Python in light mode, and
+    plain HTTP would be unidentifiable exactly where it matters most."""
+    packet = (_frame() / IP(src=LAN, dst=WAN) / TCP(sport=5000, dport=80, flags="PA")
+              / Raw(method + b" / HTTP/1.1\r\nHost: neverssl.com\r\n\r\n"))
+    assert matches(LIGHT_FILTER, Ether(bytes(packet)))
+
+
+def test_light_mode_still_drops_the_http_response_body():
+    body = (_frame() / IP(src=WAN, dst=LAN) / TCP(sport=80, dport=5000, flags="A")
+            / Raw(b"x" * 1400))
+    assert not matches(LIGHT_FILTER, Ether(bytes(body)))
