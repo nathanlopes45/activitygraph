@@ -14,6 +14,7 @@ from activitygraph.models import Packet
 
 MAC = "AA:BB:CC:11:22:33"
 IP = "192.168.1.50"
+NOW = datetime(2026, 8, 3, 12, 0, tzinfo=timezone.utc)
 
 
 def packet(hint=None, source=None, ip=IP, mac=MAC, when=None):
@@ -135,3 +136,85 @@ def test_a_late_active_answer_does_not_overwrite_a_better_passive_name():
     for fn in pending:  # the lookup completes only now
         fn()
     assert registry.get(IP).display_name() == "Sams iPhone 17"
+
+
+# ---------------- addresses that are not devices ----------------
+
+def dhcp_discover(hint, mac=MAC):
+    """A DHCP DISCOVER. Its source is 0.0.0.0 by definition: the client is
+    asking for an address precisely because it does not have one."""
+    return Packet(timestamp=NOW, src_ip="0.0.0.0", dst_ip="255.255.255.255",
+                  proto="UDP", length=300, src_port=68, dst_port=67, src_mac=mac,
+                  hostname_hint=hint, hostname_source="dhcp")
+
+
+def lease_entry(ip, hint, mac=MAC):
+    """How dhcp_leases.ingest_leases registers a device."""
+    return Packet(timestamp=NOW, src_ip=ip, dst_ip=ip, proto="ARP", length=0,
+                  src_mac=mac, arp_sender_ip=ip, arp_sender_mac=mac,
+                  hostname_hint=hint, hostname_source="lease")
+
+
+def test_a_dhcp_discover_does_not_create_a_device_at_0_0_0_0():
+    """The reported bug: one phone appeared twice, once at its real address
+    and once at 0.0.0.0. Python's ipaddress calls 0.0.0.0 private, so it
+    passed the local-device test and registered as a device of its own."""
+    registry = DeviceRegistry()
+    registry.observe(dhcp_discover("Pixel-6a"))
+    assert registry.get("0.0.0.0") is None
+    assert registry.all_devices() == []
+
+
+def test_the_name_from_a_discover_survives_to_the_real_device():
+    """Refusing the address must not throw away the name with it: option 12
+    in a DISCOVER is often the best name a phone ever sends."""
+    registry = DeviceRegistry()
+    registry.observe(dhcp_discover("Pixel-6a"))
+    registry.observe(packet(ip="192.168.50.80"))
+    assert registry.get("192.168.50.80").display_name() == "Pixel-6a"
+
+
+@pytest.mark.parametrize("address", ["0.0.0.0", "255.255.255.255", "224.0.0.251", "::"])
+def test_placeholder_addresses_never_become_devices(address):
+    registry = DeviceRegistry()
+    registry.observe(packet(ip=address))
+    assert registry.all_devices() == []
+
+
+def test_an_arp_probe_does_not_create_a_device_either():
+    """An ARP probe also announces 0.0.0.0, while a host checks whether the
+    address it wants is already taken."""
+    registry = DeviceRegistry()
+    registry.observe(Packet(timestamp=NOW, src_ip="0.0.0.0", dst_ip="192.168.50.80",
+                            proto="ARP", length=0, src_mac=MAC,
+                            arp_sender_ip="0.0.0.0", arp_sender_mac=MAC))
+    assert registry.all_devices() == []
+
+
+# ---------------- one device, several addresses ----------------
+
+def test_a_better_name_reaches_every_address_the_device_holds():
+    """Entries are keyed by address, so without this the one that received
+    the better name shows it while the rest keep their first guess, and the
+    dashboard reads as two different devices."""
+    registry = DeviceRegistry()
+    registry.observe(lease_entry("192.168.50.80", "Android_PC02UL3Q"))
+    registry.observe(packet(ip="192.168.50.81", hint="Sams Pixel", source="mdns"))
+
+    assert registry.get("192.168.50.80").display_name() == "Sams Pixel"
+    assert registry.get("192.168.50.81").display_name() == "Sams Pixel"
+
+
+def test_a_live_dhcp_name_beats_a_lease_table_name():
+    """The lease file is the same option 12 value read back from a cache,
+    so it keeps whatever the device said last time, which can be stale."""
+    registry = DeviceRegistry()
+    registry.observe(lease_entry("192.168.50.80", "Android_PC02UL3Q"))
+    registry.observe(dhcp_discover("Pixel-6a"))
+    assert registry.get("192.168.50.80").display_name() == "Pixel-6a"
+
+
+def test_the_lease_name_is_kept_when_nothing_better_arrives():
+    registry = DeviceRegistry()
+    registry.observe(lease_entry("192.168.50.80", "Android_PC02UL3Q"))
+    assert registry.get("192.168.50.80").display_name() == "Android_PC02UL3Q"
