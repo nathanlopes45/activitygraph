@@ -247,3 +247,73 @@ def test_every_preset_compiles(mode):
 
 def test_a_bad_filter_is_reported_rather_than_raised():
     assert validate_bpf_filter("this is not bpf") is not None
+
+
+# ---------------- names that are not device names ----------------
+
+# A device broadcasts two very different things: what it is called, and what
+# it is looking for. Reading the second as the first named every Windows
+# machine on the network "wpad", after the proxy-discovery lookup they all
+# make constantly.
+
+def test_a_netbios_lookup_does_not_name_the_device_making_it():
+    """The reported bug. A laptop asking "where is WPAD?" was named wpad."""
+    from scapy.layers.netbios import NBNSHeader, NBNSQueryRequest
+
+    from activitygraph.collector import _extract_hostname_hint
+
+    query = (Ether() / IP(src="192.168.50.20", dst="192.168.50.255")
+             / UDP(sport=137, dport=137)
+             / NBNSHeader() / NBNSQueryRequest(QUESTION_NAME="WPAD"))
+    assert _extract_hostname_hint(Ether(bytes(query)), "UDP", 137, 137) is None
+
+
+def test_a_netbios_registration_does_name_the_device():
+    """Registrations are a host claiming its own name, which is the one
+    NetBIOS message that genuinely identifies the sender."""
+    from scapy.layers.netbios import NBNSHeader, NBNSRegistrationRequest
+
+    from activitygraph.collector import _extract_hostname_hint
+
+    registration = (Ether() / IP(src="192.168.50.20", dst="192.168.50.255")
+                    / UDP(sport=137, dport=137)
+                    / NBNSHeader() / NBNSRegistrationRequest(QUESTION_NAME="NATHAN-LAPTOP"))
+    hint = _extract_hostname_hint(Ether(bytes(registration)), "UDP", 137, 137)
+    assert hint is not None, "a device registering its own name should be read"
+    assert hint[0].strip() == "NATHAN-LAPTOP"
+    assert hint[1] == "nbns"
+
+
+def test_an_mdns_question_does_not_name_the_asker():
+    """Same mistake, different protocol: wpad.local lookups are equally
+    common, and a question is what the sender wants, not what it is."""
+    from scapy.all import DNS, DNSQR
+
+    from activitygraph.collector import _mdns_local_name
+
+    query = DNS(qr=0, qd=DNSQR(qname="wpad.local"))
+    assert _mdns_local_name(DNS(bytes(query))) is None
+
+
+def test_an_mdns_announcement_does_name_the_sender():
+    from scapy.all import DNS, DNSRR
+
+    from activitygraph.collector import _mdns_local_name
+
+    announcement = DNS(qr=1, an=[DNSRR(rrname="Sams-iPhone.local", type="A",
+                                       rdata="192.168.50.31")])
+    assert _mdns_local_name(DNS(bytes(announcement))) == "Sams iPhone"
+
+
+@pytest.mark.parametrize("name", ["wpad", "WPAD", "isatap", "ISATAP", "WORKGROUP", "localhost"])
+def test_protocol_names_are_refused_even_from_a_registration(name):
+    """Defence in depth: these name a service or a protocol, never a host,
+    whichever message they arrive in."""
+    from scapy.layers.netbios import NBNSHeader, NBNSRegistrationRequest
+
+    from activitygraph.collector import _extract_hostname_hint
+
+    packet = (Ether() / IP(src="192.168.50.20", dst="192.168.50.255")
+              / UDP(sport=137, dport=137)
+              / NBNSHeader() / NBNSRegistrationRequest(QUESTION_NAME=name))
+    assert _extract_hostname_hint(Ether(bytes(packet)), "UDP", 137, 137) is None

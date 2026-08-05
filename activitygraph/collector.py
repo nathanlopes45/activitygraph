@@ -17,7 +17,7 @@ from typing import Callable, Optional
 
 from scapy.all import get_if_list  # noqa: F401  (surface for CLI --list-interfaces)
 from scapy.all import ARP, DHCP, DNS, DNSRR, IP, IPv6, TCP, UDP, Ether, conf, get_if_addr, sniff, srp
-from scapy.layers.netbios import NBNSQueryRequest, NBNSRegistrationRequest
+from scapy.layers.netbios import NBNSRegistrationRequest
 
 from .models import Packet
 
@@ -116,6 +116,20 @@ def _extract_tls_sni(raw_payload: bytes) -> Optional[str]:
     return None
 
 
+# Names that name a *service* or a protocol rather than a host. They show up
+# constantly on any network with Windows on it, and each one is something a
+# device is asking about rather than something it is called.
+_NOT_A_DEVICE_NAME = {
+    "WPAD",             # web proxy auto-discovery
+    "ISATAP",           # IPv6 transition adapter
+    "WORKGROUP",        # the workgroup, not a member of it
+    "MSBROWSE",
+    "__MSBROWSE__",
+    "LOCALHOST",
+    "ANY",
+}
+
+
 def _dns_records(dns, section: str) -> list:
     """The records of one DNS section ("qd"/"an"/"ns"/"ar") as a plain list.
 
@@ -138,11 +152,16 @@ def _mdns_local_name(dns) -> Optional[str]:
     A Bonjour announcement carries several records, and the useful one is
     rarely first. Service-discovery records ("_airplay._tcp.local") name a
     *service*, not the device, and the PTR/SRV chain often leads with those,
-    so scan every record and question and take the first name that is a
-    plain host label rather than a service instance.
+    so scan every record and take the first name that is a plain host label
+    rather than a service instance.
+
+    Questions are deliberately not scanned. A question is what the sender is
+    looking *for*, so reading it names a device after whatever it happened
+    to be resolving. Answers and additional records are what the sender is
+    publishing about itself, which is the thing worth reading.
     """
     candidates = []
-    for section in ("qd", "an", "ar"):
+    for section in ("an", "ar"):
         for record in _dns_records(dns, section):
             name = getattr(record, "rrname", None) or getattr(record, "qname", None)
             if name:
@@ -156,7 +175,7 @@ def _mdns_local_name(dns) -> Optional[str]:
         if "_tcp" in name.lower() or "_udp" in name.lower():
             continue
         label = name.split(".")[0]
-        if label and not label.startswith("_"):
+        if label and not label.startswith("_") and label.upper() not in _NOT_A_DEVICE_NAME:
             return label.replace("-", " ").strip()
     return None
 
@@ -188,13 +207,18 @@ def _extract_hostname_hint(scapy_pkt, proto: str, src_port, dst_port) -> Optiona
         return None
 
     if dst_port == 137 or src_port == 137:
-        for layer in (NBNSQueryRequest, NBNSRegistrationRequest):
-            if scapy_pkt.haslayer(layer):
-                raw = scapy_pkt[layer].QUESTION_NAME
-                if raw:
-                    name = raw.decode(errors="ignore").strip()
-                    if name and name.upper() != "ISATAP":  # common noise entry, not a real host
-                        return name, "nbns"
+        # Registrations only. A NetBIOS *query* carries the name being looked
+        # up, not the name of the host looking, so reading it named devices
+        # after whatever they happened to be searching for -- Windows asks
+        # for "WPAD" constantly, so every Windows machine came out as "wpad".
+        # A registration is a host claiming its own name, which is the one
+        # thing here that genuinely identifies the sender.
+        if scapy_pkt.haslayer(NBNSRegistrationRequest):
+            raw = scapy_pkt[NBNSRegistrationRequest].QUESTION_NAME
+            if raw:
+                name = raw.decode(errors="ignore").strip()
+                if name and name.upper() not in _NOT_A_DEVICE_NAME:
+                    return name, "nbns"
         return None
 
     if dst_port in (67, 68) or src_port in (67, 68):
