@@ -23,6 +23,59 @@ from .models import Packet
 
 PacketHandler = Callable[[Packet], None]
 
+# Capture everything, so byte totals are exact. Every packet is copied into
+# Python and dissected by scapy, which costs far more per packet than the
+# kernel spends forwarding it. Fine on a laptop watching its own traffic;
+# on a gateway carrying a household it can saturate the CPU and starve the
+# forwarding path, costing real throughput.
+FULL_FILTER = "ip or ip6 or arp"
+
+# Enough to identify who is talking to what, and when, without touching the
+# bulk of the data. The pieces, in order:
+#
+#   arp                     device discovery
+#   udp ports 53/5353       DNS and mDNS: hostnames, and device names
+#   udp ports 67/68, 137    DHCP and NetBIOS: device names
+#   tcp syn/fin/rst         flow start and end, which is what timing needs
+#   tls handshake bytes     the ClientHello carrying the SNI hostname
+#   small udp 443           QUIC handshake and acknowledgements, so an
+#                           HTTP/3 stream still shows as ongoing rather
+#                           than as a single instant
+#
+# What it deliberately drops is payload: the 1500-byte packets that make up
+# a download, and the bare ACKs answering them. Those are the overwhelming
+# majority of packets and they carry no information this tool reports on,
+# beyond their size. Byte totals therefore become an undercount, while the
+# service and category breakdown and the time figures stay intact.
+LIGHT_FILTER = (
+    "arp"
+    " or (udp and (port 53 or port 5353 or port 67 or port 68 or port 137))"
+    " or (tcp and tcp[tcpflags] & (tcp-syn|tcp-fin|tcp-rst) != 0)"
+    " or (tcp and (port 443 or port 8443)"
+    " and tcp[((tcp[12:1] & 0xf0) >> 2):1] = 0x16)"
+    " or (udp and port 443 and less 400)"
+)
+
+CAPTURE_MODES = {"full": FULL_FILTER, "light": LIGHT_FILTER}
+
+
+def validate_bpf_filter(expression: str) -> Optional[str]:
+    """The libpcap error for a bad filter, or None if it compiles.
+
+    Checked before capture starts rather than left to fail inside the
+    sniffing thread, where the traceback surfaces long after the command
+    that caused it and the dashboard is already up and empty.
+    """
+    try:
+        from scapy.arch.common import compile_filter
+
+        compile_filter(expression)
+        return None
+    except ImportError:
+        return None  # no libpcap to check against; let capture try anyway
+    except Exception as exc:
+        return str(exc).strip() or "not a valid capture filter"
+
 
 def _extract_tls_sni(raw_payload: bytes) -> Optional[str]:
     """Best-effort parse of a TLS ClientHello to pull the SNI hostname.
@@ -319,7 +372,7 @@ def _guess_local_subnet(interface: Optional[str]) -> Optional[str]:
 class TrafficCollector:
     """Live packet capture on a given interface, dispatching normalized Packets."""
 
-    def __init__(self, interface: Optional[str] = None, bpf_filter: str = "ip or arp") -> None:
+    def __init__(self, interface: Optional[str] = None, bpf_filter: str = FULL_FILTER) -> None:
         self.interface = interface
         self.bpf_filter = bpf_filter
 

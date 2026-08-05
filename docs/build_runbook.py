@@ -700,6 +700,14 @@ table([
      "Requires people to sign in, and shows each of them only the devices "
      "they have claimed. Without it the dashboard is unauthenticated and "
      "anyone who can reach the port can read every device's history."],
+    ["<font face='Courier'>--capture-mode light</font>",
+     "Close to mandatory on a Pi. Every packet the capture filter admits is "
+     "copied into Python and taken apart by scapy, which costs far more per "
+     "packet than the kernel spends forwarding it. On a 110 Mbps line that is "
+     "roughly 13,000 packets a second: the CPU saturates, forwarding starves, "
+     "and measured throughput falls to about 15 Mbps. Light mode inspects only "
+     "what identifies devices, services and flow timing. Categories and time "
+     "stay accurate; byte totals become an undercount."],
     ["<font face='Courier'>--history-db</font>",
      "Records activity over time, and stores hostnames learned from DNS so "
      "the service breakdown survives a reboot. A durable record of what "
@@ -781,7 +789,7 @@ Wants=network-online.target
 Type=simple
 User=root
 WorkingDirectory=$AG
-ExecStart=$AG/.venv/bin/python -m activitygraph.main --serve --serve-source live -i eth1 --host 0.0.0.0 --no-browser --accounts $AG/accounts.db --dhcp-leases --history-db $AG/history.db
+ExecStart=$AG/.venv/bin/python -m activitygraph.main --serve --serve-source live -i eth1 --host 0.0.0.0 --no-browser --capture-mode light --accounts $AG/accounts.db --dhcp-leases --history-db $AG/history.db
 Restart=always
 RestartSec=10
 
@@ -855,10 +863,12 @@ bullets([
     "<b>The Pi becomes a single point of failure.</b> If it is off, the "
     "network is down. Restart=always covers crashes, not power loss or SD "
     "card corruption.",
-    "<b>scapy drops packets under sustained load.</b> Around 100 Mbps this "
-    "is unlikely, but a saturated link can outrun Python packet parsing. "
-    "Time in categories degrades gracefully; precise byte accounting does "
-    "not.",
+    "<b>Packet inspection costs more than forwarding.</b> Measured on a Pi "
+    "4B on a 110 Mbps line, --capture-mode full reduced throughput to "
+    "about 15 Mbps: Python cannot dissect 13,000 packets a second, and "
+    "the pegged CPU starves the kernel forwarding path. "
+    "--capture-mode light avoids this by not looking at payload, at the "
+    "cost of exact byte totals. Time in categories is unaffected.",
     "<b>Device-to-device traffic may bypass the Pi.</b> A phone casting to a "
     "TV, where both sit on router 2, is switched locally and never reaches "
     "the gateway. Only traffic crossing the Pi is visible.",
