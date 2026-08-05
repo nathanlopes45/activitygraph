@@ -680,7 +680,8 @@ code("""
 cd ~/activitygraph
 sudo .venv/bin/python -m activitygraph.main \\
   --serve --serve-source live -i eth1 \\
-  --host 0.0.0.0 --no-browser --dhcp-leases \\
+  --host 0.0.0.0 --no-browser \\
+  --capture-mode light --dhcp-leases \\
   --accounts ~/activitygraph/accounts.db \\
   --history-db ~/activitygraph/history.db
 """)
