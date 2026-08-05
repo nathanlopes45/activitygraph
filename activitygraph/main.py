@@ -68,13 +68,21 @@ class Pipeline:
             local_ips = {d.ip for d in self.devices.all_devices()}
         return group_into_sessions(self.flows.all_flows(), local_ips, session_gap_seconds=self.session_gap_seconds)
 
-    def summary(self, visible_macs=None) -> dict:
+    def summary(self, visible_macs=None, only_macs=None, only_services=None) -> dict:
         """Everything the dashboard renders.
 
         `visible_macs` limits the result to devices with those MAC addresses,
         which is how a signed-in user is shown only the devices they have
         claimed. Passing None means no restriction, used for the admin view
         and for the CLI.
+
+        `only_macs` and `only_services` narrow that further, and mean
+        something different: they are what the viewer asked to look at, not
+        what they are allowed to see. Applying them after the permission
+        filter keeps that distinction, so a filter can never widen a view.
+        Every figure is recomputed against the narrowed set rather than the
+        finished payload being hidden, so the time totals answer "how long
+        on this service" rather than restating the unfiltered number.
         """
         devices = self.devices.all_devices()
         flows = self.flows.all_flows()
@@ -92,6 +100,30 @@ class Pipeline:
             flows = [f for f in flows
                      if f.src_ip in visible_ips or f.dst_ip in visible_ips]
 
+        # The viewer's own narrowing, applied second so it can only ever
+        # subtract from what the permission check already allowed.
+        available_services = sorted({f.service for f in flows if f.service})
+        available_devices = [
+            {"mac": (d.mac or "").upper(), "name": d.display_name(), "ip": d.ip}
+            for d in devices
+        ]
+
+        if only_macs:
+            chosen = {m.upper() for m in only_macs}
+            devices = [d for d in devices if (d.mac or "").upper() in chosen]
+            chosen_ips = {d.ip for d in devices}
+            flows = [f for f in flows
+                     if f.src_ip in chosen_ips or f.dst_ip in chosen_ips]
+
+        if only_services:
+            wanted = set(only_services)
+            flows = [f for f in flows if f.service in wanted]
+            # Devices with nothing left to show would otherwise sit in the
+            # list at zero, which reads as "used it for no time" rather than
+            # "did not use it".
+            active_ips = {f.src_ip for f in flows} | {f.dst_ip for f in flows}
+            devices = [d for d in devices if d.ip in active_ips]
+
         by_category: dict[str, dict] = {}
         for f in flows:
             cat = f.category or "Uncategorized"
@@ -107,6 +139,23 @@ class Pipeline:
 
         return {
             "generated_at": datetime.now(timezone.utc).isoformat(),
+            # What the viewer could filter by, listed before their filter was
+            # applied so the controls do not empty themselves on first use.
+            "filter_options": {
+                "devices": available_devices,
+                "services": available_services,
+            },
+            # Only the filters that actually applied to something visible.
+            # Echoing the request back verbatim would put a MAC belonging to
+            # somebody else's device into the payload whenever one was named,
+            # which is not a disclosure -- the caller supplied it -- but it
+            # breaks the far more useful rule that no other user's
+            # identifiers appear here at all, ever.
+            "active_filters": {
+                "devices": sorted({m.upper() for m in (only_macs or [])}
+                                  & {d["mac"] for d in available_devices}),
+                "services": sorted(set(only_services or []) & set(available_services)),
+            },
             "devices": [d.to_dict() for d in devices],
             "flows": [f.to_dict() for f in flows],
             "sessions": [s.to_dict() for s in self.sessions(local_ips)],

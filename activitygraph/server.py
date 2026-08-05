@@ -37,6 +37,24 @@ SESSION_COOKIE = "activitygraph_session"
 
 WEBAPP_DIR = Path(__file__).parent / "webapp"
 
+# A filter is a convenience, not a query language. Capping the number of
+# values keeps a hand-written URL from turning one request into a long scan.
+MAX_FILTER_VALUES = 100
+
+
+def _split_filter(raw: str, limit: int) -> list[str]:
+    """Parse a comma-separated filter parameter into distinct values."""
+    if not raw:
+        return []
+    seen: list[str] = []
+    for part in raw.split(","):
+        value = part.strip()
+        if value and value not in seen:
+            seen.append(value)
+        if len(seen) >= limit:
+            break
+    return seen
+
 
 def create_app(pipeline, live: bool = False, history_store=None, capture=None,
                accounts: 'AccountStore | None' = None, secret: bytes = b"") -> FastAPI:
@@ -207,12 +225,23 @@ def create_app(pipeline, live: bool = False, history_store=None, capture=None,
         return FileResponse(WEBAPP_DIR / "index.html")
 
     @app.get("/api/summary")
-    def summary(request: Request) -> JSONResponse:
+    def summary(request: Request, devices: str = "", services: str = "") -> JSONResponse:
+        """`devices` and `services` are comma-separated view filters.
+
+        They narrow what the caller is already permitted to see; the
+        permission check runs first inside Pipeline.summary, so passing a
+        MAC belonging to somebody else's device filters down to nothing
+        rather than revealing it.
+        """
         user = current_user(request)
         if accounts is not None and user is None:
             return JSONResponse({"error": "Not signed in."}, status_code=401)
 
-        data = pipeline.summary(visible_macs=visible_macs_for(user))
+        data = pipeline.summary(
+            visible_macs=visible_macs_for(user),
+            only_macs=_split_filter(devices, limit=MAX_FILTER_VALUES),
+            only_services=_split_filter(services, limit=MAX_FILTER_VALUES),
+        )
         data["mode"] = "live" if live else "demo"
         data["viewer"] = {
             "user": user.to_dict() if user else None,

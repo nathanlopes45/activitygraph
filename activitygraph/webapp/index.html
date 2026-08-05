@@ -361,6 +361,48 @@
     color: var(--text-muted);
   }
 
+  /* ---------------- filters ---------------- */
+
+  .filter-bar { margin-bottom: 18px; }
+  .filter-row {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding: 8px 0;
+  }
+  .filter-row + .filter-row { border-top: 1px solid var(--border-soft); }
+  .filter-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    min-width: 68px;
+  }
+  .chip {
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--bg-elevated);
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+  .chip:hover { border-color: var(--accent-dim); color: var(--text-primary); }
+  .chip.on {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #10161B;
+    font-weight: 600;
+  }
+  .filter-note {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+
   /* ---------------- accounts ---------------- */
 
   /* The sign-in gate covers the dashboard rather than sitting alongside it,
@@ -557,6 +599,23 @@
   </header>
 
   <div id="capture-warning" class="capture-warning" hidden></div>
+
+  <!-- Populated from the summary's filter_options, which the server lists
+       before applying the filter, so the controls do not empty themselves. -->
+  <section class="panel filter-bar" id="filter-bar" hidden>
+    <div class="panel-head">
+      <span class="panel-title">Filter</span>
+      <span class="panel-note" id="filter-summary"></span>
+    </div>
+    <div class="filter-row">
+      <span class="filter-label">Devices</span>
+      <div id="filter-devices" class="filter-row" style="padding:0;border:0;"></div>
+    </div>
+    <div class="filter-row">
+      <span class="filter-label">Services</span>
+      <div id="filter-services" class="filter-row" style="padding:0;border:0;"></div>
+    </div>
+  </section>
 
   <section class="panel" id="my-devices-panel" hidden>
     <div class="panel-head">
@@ -1185,9 +1244,74 @@ function renderCaptureWarning(capture) {
   }
 }
 
+/* ---------------- filters ---------------- */
+
+// Sent to the server rather than applied here, so the time and category
+// figures are recomputed for the selection instead of the unfiltered
+// numbers being shown next to a filtered device list.
+const selectedDevices = new Set();
+const selectedServices = new Set();
+
+function summaryQuery() {
+  const params = new URLSearchParams();
+  if (selectedDevices.size) params.set("devices", [...selectedDevices].join(","));
+  if (selectedServices.size) params.set("services", [...selectedServices].join(","));
+  const query = params.toString();
+  return query ? "/api/summary?" + query : "/api/summary";
+}
+
+function chip(label, isOn, onToggle) {
+  const node = el("button", { class: isOn ? "chip on" : "chip", type: "button" }, label);
+  node.addEventListener("click", () => { onToggle(); refresh(); });
+  return node;
+}
+
+function renderFilters(data) {
+  const options = data.filter_options || { devices: [], services: [] };
+  const bar = document.getElementById("filter-bar");
+  const devices = document.getElementById("filter-devices");
+  const services = document.getElementById("filter-services");
+
+  // Nothing to choose between is not a filter, it is clutter.
+  if (options.devices.length < 2 && options.services.length < 2) {
+    bar.hidden = true;
+    return;
+  }
+  bar.hidden = false;
+  devices.innerHTML = "";
+  services.innerHTML = "";
+
+  options.devices.forEach(device => {
+    const mac = device.mac;
+    devices.appendChild(chip(device.name || device.ip || mac, selectedDevices.has(mac), () => {
+      selectedDevices.has(mac) ? selectedDevices.delete(mac) : selectedDevices.add(mac);
+    }));
+  });
+
+  options.services.forEach(name => {
+    services.appendChild(chip(name, selectedServices.has(name), () => {
+      selectedServices.has(name) ? selectedServices.delete(name) : selectedServices.add(name);
+    }));
+  });
+
+  const active = selectedDevices.size + selectedServices.size;
+  const note = document.getElementById("filter-summary");
+  note.textContent = active ? "showing " + active + " selected" : "showing everything";
+
+  if (active) {
+    const clear = el("button", { class: "chip", type: "button" }, "clear");
+    clear.addEventListener("click", () => {
+      selectedDevices.clear();
+      selectedServices.clear();
+      refresh();
+    });
+    services.appendChild(clear);
+  }
+}
+
 async function refresh() {
   try {
-    const res = await fetch("/api/summary");
+    const res = await fetch(summaryQuery());
     // Signed out, or the session expired while the page was open. Stop
     // polling and show the gate instead of retrying every few seconds.
     if (res.status === 401) {
@@ -1202,6 +1326,7 @@ async function refresh() {
     modeText.textContent = data.mode || "demo";
     document.getElementById("updated-at").textContent = "updated " + formatTime(data.generated_at);
     renderCaptureWarning(data.capture);
+    renderFilters(data);
 
     renderTimeByCategory(data);
     renderTimeByGroup(data);
