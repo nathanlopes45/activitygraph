@@ -136,34 +136,77 @@ the post-NAT capture described above.
 
 ### 3. ActivityGraph
 
-```bash
-git clone <your-repo> activitygraph && cd activitygraph
-python3 -m venv .venv
-.venv/bin/pip install -e .
-.venv/bin/python -m activitygraph.main --demo    # smoke test, no root needed
+Copy the project from your laptop rather than cloning it. A private
+repository would need credentials on the Pi, and copying avoids that
+entirely.
+
+**On your laptop**, in PowerShell:
+
+```powershell
+scp -r "C:\Nathan Daily\Study\Projects\ActivityGraph\activitygraph" nathan@activitygraph.local:~/
 ```
 
-If you copied the project across with `scp -r` instead of cloning, check
-where it actually landed before continuing. `scp -r src dest` copies *into*
-`dest` when that directory already exists, which nests the project one level
-deeper than intended:
+Substitute your own project path and Pi username. Keep the quotes: the path
+contains a space, and without them scp reads it as two arguments.
+
+The destination is `~/` rather than `~/activitygraph`, which makes the
+result predictable. `scp -r` copies *into* a destination that already
+exists, and your home directory always exists, so the project lands at
+`~/activitygraph` every time. **That directory is the project root**, and
+every path later in this guide is relative to it. It legitimately contains
+a folder also named `activitygraph`, which is the Python package: seeing
+that nested name is normal.
+
+Run this once. Running it a second time copies into the project root
+instead, leaving the real project at `~/activitygraph/activitygraph` and
+quietly breaking every path below. If you need to re-copy, delete
+`~/activitygraph` on the Pi first.
+
+The transfer sends about 115 MB and takes a few minutes, almost all of it
+the `.venv` folder you are about to throw away. That is unavoidable with
+`scp`, which has no exclude option.
+
+**On the Pi**, install the system packages:
+
+```bash
+sudo apt update && sudo apt full-upgrade -y
+```
+
+```bash
+sudo apt install -y python3-pip python3-venv tcpdump dnsmasq nftables
+```
+
+Then build the environment. **The `rm -rf .venv` is required, not
+optional**: the copy brought your laptop's Windows virtualenv, which holds
+Windows executables in a `Scripts` folder where Linux expects `bin`. Left in
+place, every `.venv/bin/...` command below fails with a confusing
+"No such file or directory".
+
+```bash
+cd ~/activitygraph && rm -rf .venv && python3 -m venv .venv && .venv/bin/pip install -e .
+```
+
+Smoke test it. This needs no root and no network traffic:
+
+```bash
+.venv/bin/python -m activitygraph.main --demo
+```
+
+If it prints the category and time tables, the software side is working.
+
+If anything above could not find the project, confirm where it landed:
 
 ```bash
 find ~ -name pyproject.toml -not -path '*/.venv/*' 2>/dev/null
 ```
 
-Whatever directory holds `pyproject.toml` is the project root. Every path in
-the rest of this guide is relative to it, including the systemd unit in
-step 9. Note that the root legitimately *contains* a folder named
-`activitygraph` (the Python package), so seeing that nested name is normal
-and not itself a sign of a bad copy.
+Whatever directory holds `pyproject.toml` is the project root, and should
+be `/home/<you>/activitygraph`. If it is one level deeper, the copy ran
+twice; use the path it reports for the rest of this guide, including the
+systemd unit in step 9.
 
-An scp'd copy also brings the source machine's `.venv`, which is useless on
-the Pi's architecture. Delete it before creating a new one:
-
-```bash
-rm -rf .venv
-```
+`tcpdump` is installed because it brings in libpcap and gives you a second
+tool for checking what an interface is actually receiving.
 
 ### 4. LAN interface
 
@@ -529,6 +572,10 @@ without noticing. Set its static IP and give it a distinct SSID before
 cabling it to the Pi.
 
 ### 8. Run it
+
+```bash
+cd ~/activitygraph
+```
 
 ```bash
 sudo .venv/bin/python -m activitygraph.main \
