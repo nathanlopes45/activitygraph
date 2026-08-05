@@ -248,3 +248,106 @@ def test_without_accounts_the_api_stays_open(env):
 
     data = body(routes["/api/summary"](FakeRequest()))
     assert len(data["devices"]) == len(pipeline.devices.all_devices())
+
+
+# ---------------- view filters ----------------
+
+# Filters narrow what a caller may already see. The risk is that a filter
+# parameter becomes a second, unchecked way of naming a device, so these
+# check it subtracts and never adds.
+
+def test_a_filter_cannot_reveal_another_users_device(env):
+    """The one that matters: naming somebody else's MAC in the filter must
+    return nothing, not that device."""
+    pipeline, accounts, routes = env
+    alice = accounts.create_user("alice", "password123")
+    bob = accounts.create_user("bob", "password123")
+
+    devices = pipeline.devices.all_devices()
+    alice_device, bob_device = devices[0], devices[1]
+    accounts.claim_device(alice.id, alice_device.mac)
+    accounts.claim_device(bob.id, bob_device.mac)
+
+    result = routes["/api/summary"](
+        FakeRequest(token=issue_token(alice.id, SECRET)), devices=bob_device.mac)
+    payload = json.dumps(body(result))
+
+    assert bob_device.ip not in payload
+    assert bob_device.mac.upper() not in payload.upper()
+    assert body(result)["devices"] == []
+
+
+def test_filter_options_are_scoped_to_the_viewer(env):
+    """The chips a user is offered must not enumerate the network."""
+    pipeline, accounts, routes = env
+    alice = accounts.create_user("alice", "password123")
+    devices = pipeline.devices.all_devices()
+    accounts.claim_device(alice.id, devices[0].mac)
+
+    data = body(routes["/api/summary"](FakeRequest(token=issue_token(alice.id, SECRET))))
+    offered = {d["mac"] for d in data["filter_options"]["devices"]}
+    assert offered == {devices[0].mac.upper()}
+
+
+def test_admin_can_filter_to_a_single_device(env):
+    pipeline, accounts, routes = env
+    admin = accounts.authenticate("theadmin", "password123")
+    target = pipeline.devices.all_devices()[0]
+
+    data = body(routes["/api/summary"](
+        FakeRequest(token=issue_token(admin.id, SECRET)), devices=target.mac))
+    assert [d["ip"] for d in data["devices"]] == [target.ip]
+    assert all(f["src_ip"] == target.ip or f["dst_ip"] == target.ip for f in data["flows"])
+
+
+def test_admin_can_filter_to_a_service_across_devices(env):
+    """The other half of the request: one service, whoever used it."""
+    pipeline, accounts, routes = env
+    admin = accounts.authenticate("theadmin", "password123")
+    token = issue_token(admin.id, SECRET)
+
+    everything = body(routes["/api/summary"](FakeRequest(token=token)))
+    service = everything["filter_options"]["services"][0]
+
+    data = body(routes["/api/summary"](FakeRequest(token=token), services=service))
+    assert data["flows"], "expected at least one flow for a service that was offered"
+    assert {f["service"] for f in data["flows"]} == {service}
+    assert data["active_filters"]["services"] == [service]
+
+
+def test_filtering_recomputes_the_time_totals(env):
+    """A filter that only hid rows would leave the headline figure stating
+    the unfiltered total, which is worse than not filtering at all."""
+    pipeline, accounts, routes = env
+    admin = accounts.authenticate("theadmin", "password123")
+    token = issue_token(admin.id, SECRET)
+
+    everything = body(routes["/api/summary"](FakeRequest(token=token)))
+    target = pipeline.devices.all_devices()[0]
+    one = body(routes["/api/summary"](FakeRequest(token=token), devices=target.mac))
+
+    assert one["time_totals"]["total_active_seconds"] < \
+        everything["time_totals"]["total_active_seconds"]
+
+
+def test_devices_with_nothing_left_drop_out_of_a_service_filter(env):
+    """Otherwise they sit at zero, which reads as "used it for no time"
+    rather than "did not use it"."""
+    pipeline, accounts, routes = env
+    admin = accounts.authenticate("theadmin", "password123")
+    token = issue_token(admin.id, SECRET)
+
+    everything = body(routes["/api/summary"](FakeRequest(token=token)))
+    service = everything["filter_options"]["services"][0]
+    data = body(routes["/api/summary"](FakeRequest(token=token), services=service))
+    assert 0 < len(data["devices"]) <= len(everything["devices"])
+
+
+def test_an_unknown_filter_value_yields_nothing_rather_than_everything(env):
+    """Failing open here would turn a typo into a full disclosure."""
+    _, accounts, routes = env
+    admin = accounts.authenticate("theadmin", "password123")
+    data = body(routes["/api/summary"](
+        FakeRequest(token=issue_token(admin.id, SECRET)), devices="00:00:00:00:00:00"))
+    assert data["devices"] == []
+    assert data["flows"] == []
