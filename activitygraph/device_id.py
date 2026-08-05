@@ -192,6 +192,7 @@ class DeviceRegistry:
         resolver: Callable[[str], Optional[str]] = resolve_hostname,
         run_async: Optional[Callable[[Callable[[], None]], None]] = None,
         groups: Optional[GroupRegistry] = None,
+        exclude_macs: Optional[set] = None,
     ) -> None:
         self._devices: dict[str, Device] = {}   # keyed by MAC, or address if unknown
         self._by_address: dict[str, Device] = {}  # every address -> its device
@@ -209,9 +210,19 @@ class DeviceRegistry:
         # IPv6, where a device's address looks identical to a server's.
         self._local_macs: set[str] = set()
         self._router_macs: set[str] = set()
+        # MACs never to register. On a gateway this is the gateway itself:
+        # it carries everyone's traffic but is nobody's device, so listing
+        # it puts infrastructure in among the household.
+        self._excluded_macs = {_normalize_mac(m) for m in (exclude_macs or set())}
 
     def observe(self, packet: Packet) -> None:
         now = packet.timestamp
+
+        # Checked before anything else, including naming: an excluded device
+        # should leave no trace at all, not a nameless entry.
+        source_mac = packet.arp_sender_mac or packet.src_mac
+        if source_mac and _normalize_mac(source_mac) in self._excluded_macs:
+            return
 
         if packet.arp_sender_ip and packet.arp_sender_mac:
             # An ARP probe announces 0.0.0.0 while a host works out whether

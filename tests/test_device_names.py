@@ -307,3 +307,38 @@ def test_flows_on_either_address_count_toward_the_same_device():
     ranked = rank_devices(flows, registry.all_devices())
     assert len(ranked) == 1
     assert ranked[0]["byte_count"] == 1500, "traffic on the second address was dropped"
+
+
+# ---------------- hiding the capturing machine ----------------
+
+def test_the_gateway_can_be_left_out_of_the_device_list():
+    """On a gateway the capturing machine carries everyone's traffic but is
+    nobody's device, and it appears under every address it answers on."""
+    registry = DeviceRegistry(exclude_macs={"PI:00:00:00:00:01"})
+    registry.observe(at("192.168.1.106", mac="PI:00:00:00:00:01"))
+    registry.observe(at("192.168.50.1", mac="PI:00:00:00:00:01"))
+    registry.observe(at("192.168.50.50", mac="IP:HO:NE:00:00:03", hint="iPhone", source="dhcp"))
+
+    assert [d.display_name() for d in registry.all_devices()] == ["iPhone"]
+
+
+def test_an_excluded_device_leaves_no_trace_at_all():
+    """Not even a nameless entry, and not a lookup hit for claiming."""
+    registry = DeviceRegistry(exclude_macs={"PI:00:00:00:00:01"})
+    registry.observe(at("192.168.50.1", mac="PI:00:00:00:00:01", hint="raspberrypi",
+                        source="dhcp"))
+    assert registry.all_devices() == []
+    assert registry.get("192.168.50.1") is None
+
+
+def test_exclusion_is_case_insensitive_like_every_other_mac_comparison():
+    registry = DeviceRegistry(exclude_macs={"pi:00:00:00:00:01"})
+    registry.observe(at("192.168.50.1", mac="PI:00:00:00:00:01"))
+    assert registry.all_devices() == []
+
+
+def test_nothing_is_excluded_by_default():
+    """A laptop capturing its own traffic is the only device it can see."""
+    registry = DeviceRegistry()
+    registry.observe(at("192.168.50.1", mac="PI:00:00:00:00:01"))
+    assert len(registry.all_devices()) == 1

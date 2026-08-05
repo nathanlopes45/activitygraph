@@ -49,10 +49,10 @@ def _all_addresses(devices) -> set:
 
 
 class Pipeline:
-    def __init__(self, idle_timeout_seconds: float = 30.0, llm_classifier=None, session_gap_seconds: float = 300.0, device_aliases=None, active_resolve: bool = False, device_groups=None, min_activity_seconds: float = DEFAULT_MIN_ACTIVITY_SECONDS, taxonomy=None, name_store=None) -> None:
+    def __init__(self, idle_timeout_seconds: float = 30.0, llm_classifier=None, session_gap_seconds: float = 300.0, device_aliases=None, active_resolve: bool = False, device_groups=None, min_activity_seconds: float = DEFAULT_MIN_ACTIVITY_SECONDS, taxonomy=None, name_store=None, exclude_macs=None) -> None:
         self.groups = GroupRegistry(device_groups)
         self.taxonomy = TaxonomyRegistry(taxonomy)
-        self.devices = DeviceRegistry(aliases=device_aliases, active_resolve=active_resolve, groups=self.groups)
+        self.devices = DeviceRegistry(aliases=device_aliases, active_resolve=active_resolve, groups=self.groups, exclude_macs=exclude_macs)
         self.flows = FlowProcessor(idle_timeout_seconds=idle_timeout_seconds)
         self.services = ServiceDetector(llm_classifier=llm_classifier, name_store=name_store)
         self.session_gap_seconds = session_gap_seconds
@@ -201,8 +201,8 @@ def run_demo(idle_timeout: float, llm_classifier=None, session_gap_seconds: floa
     return pipeline
 
 
-def run_live(interface: str | None, duration: float, idle_timeout: float, llm_classifier=None, session_gap_seconds: float = 300.0, device_aliases=None, active_resolve: bool = False, arp_sweep: bool = False, arp_sweep_subnet: str | None = None, arp_sweep_timeout: float = 3.0, router_devices: bool = False, router_credentials: str | None = None, device_groups=None, min_activity_seconds: float = DEFAULT_MIN_ACTIVITY_SECONDS, taxonomy=None, dhcp_leases: str | None = None, bpf_filter: str | None = None) -> Pipeline:
-    pipeline = Pipeline(idle_timeout_seconds=idle_timeout, llm_classifier=llm_classifier, session_gap_seconds=session_gap_seconds, device_aliases=device_aliases, active_resolve=active_resolve, device_groups=device_groups, min_activity_seconds=min_activity_seconds, taxonomy=taxonomy)
+def run_live(interface: str | None, duration: float, idle_timeout: float, llm_classifier=None, session_gap_seconds: float = 300.0, device_aliases=None, active_resolve: bool = False, arp_sweep: bool = False, arp_sweep_subnet: str | None = None, arp_sweep_timeout: float = 3.0, router_devices: bool = False, router_credentials: str | None = None, device_groups=None, min_activity_seconds: float = DEFAULT_MIN_ACTIVITY_SECONDS, taxonomy=None, dhcp_leases: str | None = None, bpf_filter: str | None = None, exclude_macs=None) -> Pipeline:
+    pipeline = Pipeline(idle_timeout_seconds=idle_timeout, llm_classifier=llm_classifier, session_gap_seconds=session_gap_seconds, device_aliases=device_aliases, active_resolve=active_resolve, device_groups=device_groups, min_activity_seconds=min_activity_seconds, taxonomy=taxonomy, exclude_macs=exclude_macs)
     collector = (TrafficCollector(interface=interface, bpf_filter=bpf_filter)
                  if bpf_filter else TrafficCollector(interface=interface))
     warn_if_capturing_wan(interface)
@@ -425,6 +425,12 @@ def main() -> None:
                               "{\"brand\": \"tplink\", \"host\": \"192.168.1.1\", \"username\": \"admin\", "
                               "\"password\": \"...\"}. Kept in its own file (not a CLI argument) so the "
                               "password never lands in shell history. Currently supported brands: tplink.")
+    parser.add_argument("--exclude-self", action="store_true",
+                         help="Leave this machine out of the device list. On a gateway the "
+                              "capturing machine forwards everyone's traffic but is nobody's "
+                              "device, so it otherwise appears alongside the phones and laptops, "
+                              "sometimes more than once. Do not use it on a laptop capturing its "
+                              "own traffic, where that machine is the only thing there is to see.")
     parser.add_argument("--capture-mode", choices=["full", "light"], default="full",
                          help="How much traffic to inspect. 'full' reads every packet and "
                               "gives exact byte totals, but the per-packet cost is far higher "
@@ -453,6 +459,12 @@ def main() -> None:
     from .collector import CAPTURE_MODES, validate_bpf_filter
 
     capture_filter = args.bpf_filter or CAPTURE_MODES[args.capture_mode]
+    excluded_macs = set()
+    if args.exclude_self:
+        from .collector import local_hardware_addresses
+        excluded_macs = local_hardware_addresses()
+        print(f"[activitygraph] Hiding this machine from the device list "
+              f"({len(excluded_macs)} interface(s)).")
     # Checked here rather than inside the capture thread, where the failure
     # would surface long after the command and behind an already-running,
     # permanently empty dashboard.
@@ -493,7 +505,7 @@ def main() -> None:
         pipeline = run_demo(idle_timeout=args.idle_timeout, llm_classifier=llm_classifier, session_gap_seconds=args.session_gap, device_aliases=device_aliases, active_resolve=args.active_resolve, device_groups=device_groups, min_activity_seconds=args.min_activity_seconds, taxonomy=taxonomy)
     elif args.live:
         try:
-            pipeline = run_live(args.interface, args.duration, args.idle_timeout, llm_classifier=llm_classifier, session_gap_seconds=args.session_gap, device_aliases=device_aliases, active_resolve=args.active_resolve, arp_sweep=args.arp_sweep, arp_sweep_subnet=args.arp_sweep_subnet, arp_sweep_timeout=args.arp_sweep_timeout, router_devices=args.router_devices, router_credentials=args.router_credentials, device_groups=device_groups, min_activity_seconds=args.min_activity_seconds, taxonomy=taxonomy, dhcp_leases=args.dhcp_leases, bpf_filter=capture_filter)
+            pipeline = run_live(args.interface, args.duration, args.idle_timeout, llm_classifier=llm_classifier, session_gap_seconds=args.session_gap, device_aliases=device_aliases, active_resolve=args.active_resolve, arp_sweep=args.arp_sweep, arp_sweep_subnet=args.arp_sweep_subnet, arp_sweep_timeout=args.arp_sweep_timeout, router_devices=args.router_devices, router_credentials=args.router_credentials, device_groups=device_groups, min_activity_seconds=args.min_activity_seconds, taxonomy=taxonomy, dhcp_leases=args.dhcp_leases, bpf_filter=capture_filter, exclude_macs=excluded_macs)
         except PermissionError:
             print("Live capture requires elevated privileges (try running with sudo).", file=sys.stderr)
             sys.exit(1)
@@ -514,10 +526,10 @@ def main() -> None:
             # The history database doubles as the learned IP -> hostname
             # store, so a restarted gateway keeps recognising services it
             # has already seen instead of relabelling them all as "HTTPS".
-            pipeline = Pipeline(idle_timeout_seconds=args.idle_timeout, llm_classifier=llm_classifier, session_gap_seconds=args.session_gap, device_aliases=device_aliases, active_resolve=args.active_resolve, device_groups=device_groups, min_activity_seconds=args.min_activity_seconds, taxonomy=taxonomy, name_store=history_store)
+            pipeline = Pipeline(idle_timeout_seconds=args.idle_timeout, llm_classifier=llm_classifier, session_gap_seconds=args.session_gap, device_aliases=device_aliases, active_resolve=args.active_resolve, device_groups=device_groups, min_activity_seconds=args.min_activity_seconds, taxonomy=taxonomy, name_store=history_store, exclude_macs=excluded_macs)
             # Grouping and min-activity live on the Pipeline itself, so
             # BackgroundCapture doesn't need to know about them.
-            capture = BackgroundCapture(pipeline, interface=args.interface, history_store=history_store, arp_sweep=args.arp_sweep, arp_sweep_subnet=args.arp_sweep_subnet, arp_sweep_timeout=args.arp_sweep_timeout, router_devices=args.router_devices, router_credentials=args.router_credentials, dhcp_leases=args.dhcp_leases, bpf_filter=capture_filter)
+            capture = BackgroundCapture(pipeline, interface=args.interface, history_store=history_store, arp_sweep=args.arp_sweep, arp_sweep_subnet=args.arp_sweep_subnet, arp_sweep_timeout=args.arp_sweep_timeout, router_devices=args.router_devices, router_credentials=args.router_credentials, dhcp_leases=args.dhcp_leases, bpf_filter=capture_filter, exclude_macs=excluded_macs)
             try:
                 capture.start()
             except PermissionError:

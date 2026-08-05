@@ -591,6 +591,12 @@ sudo .venv/bin/python -m activitygraph.main \
 ```
 
 - `-i eth1` is the LAN side. **Not `eth0`.** See the warning at the top.
+- `--exclude-self` keeps the Pi out of the device list. It forwards
+  everyone's traffic but is nobody's device, and it otherwise appears
+  more than once: under its LAN address, and again under its upstream
+  address, which it answers on whenever you open the dashboard by that
+  address from the LAN side. Leave this off on a laptop capturing its
+  own traffic, where that machine is the only thing there is to see.
 - `--capture-mode light` is close to mandatory on a Pi. Every packet the
   capture filter admits is copied into Python and taken apart by scapy,
   which costs far more per packet than the kernel spends forwarding it. On
@@ -674,7 +680,7 @@ Wants=network-online.target
 Type=simple
 User=root
 WorkingDirectory=$AG
-ExecStart=$AG/.venv/bin/python -m activitygraph.main --serve --serve-source live -i eth1 --host 0.0.0.0 --no-browser --capture-mode light --accounts $AG/accounts.db --dhcp-leases --history-db $AG/history.db
+ExecStart=$AG/.venv/bin/python -m activitygraph.main --serve --serve-source live -i eth1 --host 0.0.0.0 --no-browser --capture-mode light --exclude-self --accounts $AG/accounts.db --dhcp-leases --history-db $AG/history.db
 Restart=always
 RestartSec=10
 
@@ -712,7 +718,7 @@ User=root
 WorkingDirectory=/opt/activitygraph
 ExecStart=/opt/activitygraph/.venv/bin/python -m activitygraph.main \
   --serve --serve-source live -i eth1 --host 0.0.0.0 --no-browser \
-  --capture-mode light --accounts /opt/activitygraph/accounts.db \
+  --capture-mode light --exclude-self \n  --accounts /opt/activitygraph/accounts.db \
   --dhcp-leases --history-db /opt/activitygraph/history.db
 Restart=always
 RestartSec=10
