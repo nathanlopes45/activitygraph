@@ -48,7 +48,10 @@ pass carries the default route.
   router works: you will run it as a dumb access point.
 - Two Ethernet cables
 
-At around 100 Mbps, a Pi 4B running scapy has comfortable headroom.
+A Pi 4B forwards at well over 100 Mbps, but only if it is not also
+inspecting every packet in Python. Run it with `--capture-mode light`
+(step 8), which is what makes that true in practice. Measured on a 110 Mbps
+line, inspecting everything dropped throughput to about 15 Mbps.
 
 You can substitute the Pi's onboard Wi-Fi for the access point and skip the
 USB adapter, but the Pi's radio is weaker than a dedicated AP for range and
@@ -581,12 +584,23 @@ cd ~/activitygraph
 sudo .venv/bin/python -m activitygraph.main \
   --serve --serve-source live -i eth1 \
   --host 0.0.0.0 --no-browser \
+  --capture-mode light \
   --dhcp-leases \
   --accounts ~/activitygraph/accounts.db \
   --history-db ~/activitygraph/history.db
 ```
 
 - `-i eth1` is the LAN side. **Not `eth0`.** See the warning at the top.
+- `--capture-mode light` is close to mandatory on a Pi. Every packet the
+  capture filter admits is copied into Python and taken apart by scapy,
+  which costs far more per packet than the kernel spends forwarding it. On
+  a 110 Mbps line that is roughly 13,000 packets a second, the Pi's CPU
+  saturates, the kernel's own forwarding starves, and measured throughput
+  drops to around 15 Mbps. Light mode inspects only what identifies
+  devices, services and flow timing, and skips the payload that makes up
+  the bulk of the packets. Categories and time stay accurate; byte totals
+  become an undercount. If you want exact bytes and can accept the
+  throughput cost, use `--capture-mode full`.
 - `--dhcp-leases` names and registers every device from the lease table. With
   no value it probes the usual dnsmasq locations; pass a path to override.
 - `--host 0.0.0.0` is needed to reach the dashboard from another machine. It
@@ -659,7 +673,7 @@ Wants=network-online.target
 Type=simple
 User=root
 WorkingDirectory=$AG
-ExecStart=$AG/.venv/bin/python -m activitygraph.main --serve --serve-source live -i eth1 --host 0.0.0.0 --no-browser --accounts $AG/accounts.db --dhcp-leases --history-db $AG/history.db
+ExecStart=$AG/.venv/bin/python -m activitygraph.main --serve --serve-source live -i eth1 --host 0.0.0.0 --no-browser --capture-mode light --accounts $AG/accounts.db --dhcp-leases --history-db $AG/history.db
 Restart=always
 RestartSec=10
 
@@ -781,9 +795,12 @@ captured normally.
 - **The Pi becomes a single point of failure.** If it is off, the network is
   down. `Restart=always` covers crashes, not power loss or SD card
   corruption.
-- **scapy drops packets under sustained load.** At around 100 Mbps this is
-  unlikely, but a saturated link can outrun Python packet parsing. Time in
-  categories degrades gracefully; precise byte accounting does not.
+- **Packet inspection costs more than forwarding.** Measured on a Pi 4B on
+  a 110 Mbps line, `--capture-mode full` reduced throughput to about
+  15 Mbps: Python cannot dissect 13,000 packets a second, and the pegged
+  CPU starves the kernel's forwarding path. `--capture-mode light` avoids
+  this by not looking at payload, at the cost of exact byte totals. Time
+  in categories is unaffected either way.
 - **Device-to-device traffic may bypass the Pi.** A phone casting to a TV
   where both sit on the same access point is switched locally and never
   reaches the gateway. Only traffic crossing the Pi is visible.

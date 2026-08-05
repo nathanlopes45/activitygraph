@@ -136,3 +136,114 @@ def test_a_response_with_no_answers_is_not_an_error():
     parsed = _packet_to_normalized(_dns_response("nowhere.invalid", []))
     assert parsed.dns_query == "nowhere.invalid"
     assert parsed.dns_answers is None
+
+
+# ---------------- capture filters ----------------
+
+# The capture filter is the difference between a gateway that forwards at
+# line rate and one that does not. Every packet the filter admits is copied
+# into Python and dissected by scapy, which costs far more per packet than
+# the kernel spends forwarding it. These check the filter admits what the
+# tool needs and rejects the payload that makes up the bulk of traffic.
+
+import pytest
+
+from scapy.all import DNS, DNSQR, Ether, IP, Raw, TCP, UDP
+
+from activitygraph.collector import (
+    CAPTURE_MODES,
+    FULL_FILTER,
+    LIGHT_FILTER,
+    validate_bpf_filter,
+)
+
+LAN, WAN = "192.168.50.20", "142.250.66.238"
+
+
+def _frame():
+    return Ether(src="aa:bb:cc:11:22:33", dst="11:22:33:44:55:66")
+
+
+def matches(expression, packet):
+    """Run a packet through the real compiled BPF program.
+
+    Compiling proves the syntax; only running it proves the offsets, and the
+    TLS handshake clause indexes into the TCP payload by computed offset,
+    which is exactly the kind of thing that compiles while matching nothing.
+    """
+    import ctypes
+
+    from scapy.arch.common import compile_filter
+
+    try:
+        from scapy.libs.winpcapy import pcap_offline_filter, pcap_pkthdr
+    except ImportError:  # pragma: no cover - platform without libpcap bindings
+        pytest.skip("libpcap bindings unavailable")
+
+    program = compile_filter(expression)
+    raw = bytes(packet)
+    header = pcap_pkthdr()
+    header.len = header.caplen = len(raw)
+    buffer = ctypes.create_string_buffer(raw, len(raw))
+    return pcap_offline_filter(
+        ctypes.byref(program), ctypes.byref(header),
+        ctypes.cast(buffer, ctypes.POINTER(ctypes.c_ubyte))) != 0
+
+
+@pytest.mark.parametrize("name,packet", [
+    ("arp", _frame() / ARP(psrc=LAN, pdst="192.168.50.1")),
+    ("dns", _frame() / IP(src=LAN, dst="192.168.50.1") / UDP(sport=5000, dport=53)
+     / DNS(qd=DNSQR(qname="youtube.com"))),
+    ("mdns", _frame() / IP(src=LAN, dst="224.0.0.251") / UDP(sport=5353, dport=5353) / DNS()),
+    ("dhcp", _frame() / IP(src="0.0.0.0", dst="255.255.255.255")
+     / UDP(sport=68, dport=67) / Raw(b"x" * 40)),
+    ("netbios", _frame() / IP(src=LAN, dst="192.168.50.255")
+     / UDP(sport=137, dport=137) / Raw(b"x" * 40)),
+    ("tcp syn", _frame() / IP(src=LAN, dst=WAN) / TCP(sport=5000, dport=443, flags="S")),
+    ("tcp fin", _frame() / IP(src=LAN, dst=WAN) / TCP(sport=5000, dport=443, flags="FA")),
+    # TLS record type 0x16 is a handshake, which is where the SNI hostname
+    # lives. Without this the light filter would identify no services at all.
+    ("tls clienthello", _frame() / IP(src=LAN, dst=WAN) / TCP(sport=5000, dport=443, flags="PA")
+     / Raw(bytes([0x16, 3, 1, 0, 200]) + b"x" * 200)),
+    ("quic handshake", _frame() / IP(src=LAN, dst=WAN) / UDP(sport=5000, dport=443)
+     / Raw(b"x" * 80)),
+])
+def test_light_filter_keeps_what_identifies_traffic(name, packet):
+    assert matches(LIGHT_FILTER, Ether(bytes(packet))), f"{name} would no longer be seen"
+
+
+@pytest.mark.parametrize("name,packet", [
+    # TLS record type 0x17 is application data: the download itself.
+    ("tcp bulk data", _frame() / IP(src=WAN, dst=LAN) / TCP(sport=443, dport=5000, flags="A")
+     / Raw(bytes([0x17, 3, 3, 5, 0]) + b"x" * 1440)),
+    ("bare ack", _frame() / IP(src=LAN, dst=WAN) / TCP(sport=5000, dport=443, flags="A")),
+    ("quic bulk", _frame() / IP(src=WAN, dst=LAN) / UDP(sport=443, dport=5000) / Raw(b"x" * 1350)),
+])
+def test_light_filter_drops_bulk_payload(name, packet):
+    """These are the overwhelming majority of packets on a busy link, and
+    they carry nothing this tool reports beyond their size."""
+    assert not matches(LIGHT_FILTER, Ether(bytes(packet))), f"{name} still reaches Python"
+
+
+def test_full_filter_keeps_everything_including_bulk():
+    """The default stays exact. Only --capture-mode light trades that away."""
+    bulk = _frame() / IP(src=WAN, dst=LAN) / TCP(sport=443, dport=5000, flags="A") / Raw(b"x" * 1440)
+    assert matches(FULL_FILTER, Ether(bytes(bulk)))
+
+
+def test_full_filter_covers_ipv6():
+    """It read "ip or arp" for a long time, which silently excluded IPv6 and
+    made the IPv6 parsing below it unreachable in live capture."""
+    from scapy.layers.inet6 import IPv6
+
+    packet = _frame() / IPv6(src="2001:db8::1", dst="2001:db8::2") / TCP(sport=5000, dport=443)
+    assert matches(FULL_FILTER, Ether(bytes(packet)))
+
+
+@pytest.mark.parametrize("mode", sorted(CAPTURE_MODES))
+def test_every_preset_compiles(mode):
+    assert validate_bpf_filter(CAPTURE_MODES[mode]) is None
+
+
+def test_a_bad_filter_is_reported_rather_than_raised():
+    assert validate_bpf_filter("this is not bpf") is not None

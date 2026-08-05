@@ -391,11 +391,13 @@ class BackgroundCapture:
         restart_backoff_seconds: float = 2.0,
         max_restart_backoff_seconds: float = 60.0,
         dhcp_leases: Optional[str] = None,
+        bpf_filter: Optional[str] = None,
     ) -> None:
         from .collector import TrafficCollector
 
         self.pipeline = pipeline
-        self.collector = TrafficCollector(interface=interface)
+        self.collector = (TrafficCollector(interface=interface, bpf_filter=bpf_filter)
+                          if bpf_filter else TrafficCollector(interface=interface))
         self.flush_interval_seconds = flush_interval_seconds
         self.history_store = history_store
         self.arp_sweep = arp_sweep
