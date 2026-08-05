@@ -153,3 +153,52 @@ def test_explicit_host_is_used_verbatim():
 
     assert reachable_urls("192.168.50.1", 8420) == ["http://192.168.50.1:8420"]
     assert reachable_urls("127.0.0.1", 9000) == ["http://127.0.0.1:9000"]
+
+
+def test_a_gateways_lan_address_is_offered_first_not_loopback():
+    """The bug this replaced: addresses came from resolving the hostname,
+    and Debian maps the hostname to 127.0.1.1 in /etc/hosts. On a Pi
+    gateway, the machine this feature exists for, it printed only loopback
+    addresses, so the one URL that reaches the dashboard from a phone was
+    the one it never showed."""
+    import activitygraph.server as server
+
+    with patch.object(server, "_interface_addresses",
+                      return_value=["127.0.0.1", "192.168.1.55", "192.168.50.1"]):
+        urls = server.reachable_urls("0.0.0.0", 8420)
+
+    assert "http://192.168.50.1:8420" in urls
+    assert urls[-1] == "http://127.0.0.1:8420", "loopback should be the last resort"
+    assert not urls[0].startswith("http://127."), "a routable address should come first"
+
+
+def test_hostname_only_loopback_does_not_hide_real_addresses():
+    """127.0.1.1 is the specific value Debian uses, so it gets its own case."""
+    import activitygraph.server as server
+
+    with patch.object(server, "_interface_addresses",
+                      return_value=["127.0.1.1", "192.168.50.1"]):
+        urls = server.reachable_urls("0.0.0.0", 8420)
+
+    assert "http://127.0.1.1:8420" not in urls
+    assert urls == ["http://192.168.50.1:8420", "http://127.0.0.1:8420"]
+
+
+def test_interfaces_without_a_lease_are_not_offered():
+    """169.254.x.x means DHCP never answered, so it reaches nobody."""
+    import activitygraph.server as server
+
+    with patch.object(server, "_interface_addresses",
+                      return_value=["169.254.90.201", "192.168.50.1"]):
+        urls = server.reachable_urls("0.0.0.0", 8420)
+
+    assert not any("169.254" in u for u in urls)
+    assert "http://192.168.50.1:8420" in urls
+
+
+def test_loopback_is_still_offered_when_nothing_else_exists():
+    """An offline machine must still print something that opens."""
+    import activitygraph.server as server
+
+    with patch.object(server, "_interface_addresses", return_value=[]):
+        assert server.reachable_urls("0.0.0.0", 8420) == ["http://127.0.0.1:8420"]
