@@ -65,6 +65,26 @@ def _is_local_ip(ip: str) -> bool:
         return False
 
 
+def _is_addressable(ip: str) -> bool:
+    """False for addresses that cannot belong to a device.
+
+    A device is not its address, but every device entry is keyed by one, so
+    a placeholder address becomes a phantom device that never goes away.
+    The common one is 0.0.0.0: a DHCP DISCOVER carries it as the source
+    because the client has no address yet, and an ARP probe uses it for the
+    same reason. Python's ipaddress calls 0.0.0.0 private, so it otherwise
+    passes the local-device test and registers a duplicate of whichever
+    phone is currently asking for a lease.
+    """
+    try:
+        address = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    if address.is_unspecified or address.is_multicast:
+        return False
+    return ip not in ("255.255.255.255", "::")
+
+
 def _is_ipv6(ip: str) -> bool:
     try:
         return ipaddress.ip_address(ip).version == 6
@@ -78,9 +98,12 @@ def _normalize_mac(mac: str) -> str:
 
 # How much a name source is worth. mDNS names are usually the one the owner
 # typed into their device's settings; a DHCP option 12 hostname is often
-# just the model. Active resolution is the weakest -- it is a fallback for
-# devices that announced nothing at all.
-_SOURCE_RANK = {"mdns": 3, "nbns": 2, "dhcp": 1, "lease": 1, "active": 0}
+# just the model. A lease-table entry is the same option 12 value read back
+# from the DHCP server's cache, so it ranks below the packet: the file keeps
+# whatever the device said last time, which can be an old name or an old
+# owner. Active resolution is weakest -- a fallback for devices that
+# announced nothing at all.
+_SOURCE_RANK = {"mdns": 4, "nbns": 3, "dhcp": 2, "lease": 1, "active": 0}
 
 # Above anything a protocol can produce: you know your own devices better
 # than any guess, so an alias is never displaced.
@@ -175,12 +198,23 @@ class DeviceRegistry:
         now = packet.timestamp
 
         if packet.arp_sender_ip and packet.arp_sender_mac:
-            self._local_macs.add(_normalize_mac(packet.arp_sender_mac))
-            self._touch(packet.arp_sender_ip, packet.arp_sender_mac, now,
-                        packet.hostname_hint, packet.hostname_source)
+            # An ARP probe announces 0.0.0.0 while a host works out whether
+            # the address it wants is free, so this path needs the same
+            # guard as the one below.
+            if _is_addressable(packet.arp_sender_ip):
+                self._local_macs.add(_normalize_mac(packet.arp_sender_mac))
+                self._touch(packet.arp_sender_ip, packet.arp_sender_mac, now,
+                            packet.hostname_hint, packet.hostname_source)
             return
 
         if not (packet.src_ip and packet.src_mac):
+            return
+        if not _is_addressable(packet.src_ip):
+            # No device to attach it to, but the packet may still be the best
+            # look at this device's name we ever get: a DHCP DISCOVER carries
+            # the hostname in option 12 and is sent from 0.0.0.0 by
+            # definition. Keep the name, drop the address.
+            self._remember_name(packet.src_mac, packet.hostname_hint, packet.hostname_source)
             return
         mac = _normalize_mac(packet.src_mac)
 
@@ -207,6 +241,44 @@ class DeviceRegistry:
             # belong to a device here rather than to a router.
             self._touch(packet.src_ip, packet.src_mac, now,
                         packet.hostname_hint, packet.hostname_source)
+
+    def _remember_name(self, mac: Optional[str], hostname_hint: Optional[str],
+                       hostname_source: Optional[str] = None,
+                       fallback_key: Optional[str] = None):
+        """Record the best name known for a device, and return it.
+
+        Keyed by MAC so it survives the device changing address, falling back
+        to the address only when no MAC is known.
+        """
+        key = _normalize_mac(mac) if mac else fallback_key
+        if key is None:
+            return None
+
+        alias = self._aliases.get(_normalize_mac(mac)) if mac else None
+        if alias:
+            candidate = (alias, _ALIAS_QUALITY)  # user-configured, always wins
+        elif hostname_hint:
+            candidate = (hostname_hint, name_quality(hostname_hint, hostname_source))
+        else:
+            candidate = None
+
+        # Keep the best name seen for this device, not the first. A phone
+        # that announces a generic model name over DHCP before its
+        # personalised mDNS name would otherwise be stuck with the generic
+        # one for the rest of the capture.
+        best = self._best_name.get(key)
+        if candidate is not None and (best is None or candidate[1] > best[1]):
+            best = candidate
+            self._best_name[key] = candidate
+            # One device can hold several addresses at once, and each is a
+            # separate entry. Without this the entries drift apart: the one
+            # that happened to receive the better name shows it and the rest
+            # keep whatever they were given first, which reads as two
+            # different devices.
+            for device in self._devices.values():
+                if mac and _normalize_mac(device.mac or "") == key:
+                    device.hostname = best[0]
+        return best
 
     def _note_router_mac(self, mac: str) -> None:
         """Record a MAC seen forwarding traffic, and undo any damage it did.
@@ -238,23 +310,7 @@ class DeviceRegistry:
                 device.vendor = lookup_vendor(mac)
             device.touch(when)
 
-        key = _normalize_mac(mac) if mac else ip
-        alias = self._aliases.get(_normalize_mac(mac)) if mac else None
-        if alias:
-            candidate = (alias, _ALIAS_QUALITY)  # user-configured, always wins
-        elif hostname_hint:
-            candidate = (hostname_hint, name_quality(hostname_hint, hostname_source))
-        else:
-            candidate = None
-
-        # Keep the best name seen for this device, not the first. A phone
-        # that announces a generic model name over DHCP before its
-        # personalised mDNS name would otherwise be stuck with the generic
-        # one for the rest of the capture.
-        best = self._best_name.get(key)
-        if candidate is not None and (best is None or candidate[1] > best[1]):
-            best = candidate
-            self._best_name[key] = candidate
+        best = self._remember_name(mac, hostname_hint, hostname_source, fallback_key=ip)
         if best is not None:
             # Assigned every time rather than only on improvement: the
             # device object is keyed by IP, so a device that picks up a new
@@ -270,7 +326,7 @@ class DeviceRegistry:
         # have is a model name -- reverse DNS or NBSTAT may know the
         # personalised one that the device never broadcast.
         if self._active_resolve and is_new and (best is None or best[1] < 10):
-            self._schedule_active_resolution(ip, key)
+            self._schedule_active_resolution(ip, _normalize_mac(mac) if mac else ip)
 
     def _schedule_active_resolution(self, ip: str, key: str) -> None:
         # Only worth asking once per IP -- if nobody answers the first

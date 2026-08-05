@@ -107,6 +107,7 @@ def ingest_leases(pipeline, path: Optional[str] = None, announce: bool = True) -
             timestamp=now, src_ip=lease.ip, dst_ip=lease.ip, proto="ARP", length=0,
             src_mac=lease.mac, arp_sender_ip=lease.ip, arp_sender_mac=lease.mac,
             hostname_hint=lease.hostname,
+            hostname_source="lease",
         ))
     if announce and leases:
         named = sum(1 for lease in leases if lease.hostname)
