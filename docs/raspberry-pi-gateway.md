@@ -51,7 +51,7 @@ pass carries the default route.
 A Pi 4B forwards at well over 100 Mbps, but only if it is not also
 inspecting every packet in Python. Run it with `--capture-mode light`
 (step 8), which is what makes that true in practice. Measured on a 110 Mbps
-line, inspecting everything dropped throughput to about 15 Mbps.
+line: about 15 Mbps inspecting everything, about 100 Mbps in light mode.
 
 You can substitute the Pi's onboard Wi-Fi for the access point and skip the
 USB adapter, but the Pi's radio is weaker than a dedicated AP for range and
@@ -596,7 +596,8 @@ sudo .venv/bin/python -m activitygraph.main \
   which costs far more per packet than the kernel spends forwarding it. On
   a 110 Mbps line that is roughly 13,000 packets a second, the Pi's CPU
   saturates, the kernel's own forwarding starves, and measured throughput
-  drops to around 15 Mbps. Light mode inspects only what identifies
+  drops to around 15 Mbps. The same line measures about 100 Mbps with
+  `--capture-mode light`. Light mode inspects only what identifies
   devices, services and flow timing, and skips the payload that makes up
   the bulk of the packets. Categories and time stay accurate; byte totals
   become an undercount. If you want exact bytes and can accept the
@@ -773,6 +774,69 @@ If the phone shows 0m, work through these in order:
 | Everyone logged out after a reboot | The session key moved or was deleted. With `--accounts PATH` it lives beside that path |
 | No IPv6 anywhere | Expected. The LAN is single-stack by design; see step 4 |
 
+### Wi-Fi appears, but devices get no internet
+
+The most common failure after the rebuild, and the one that looks worst
+while being the smallest fault. Establish which half is broken before
+changing anything, because the Pi is usually innocent.
+
+Check the Pi first, in this order:
+
+```bash
+ip -br addr
+```
+
+```bash
+ip route
+```
+
+```bash
+ping -c 3 1.1.1.1
+```
+
+```bash
+ping -c 3 google.com
+```
+
+You want `eth0` holding an address from the upstream router, `eth1` on
+`192.168.50.1/24`, a `default via` route out of `eth0`, and both pings
+succeeding. If all of that holds, **the Pi is fine** and nothing on it needs
+touching. The fault is between the Pi and your devices.
+
+Then look at whether anything ever asked the Pi for an address:
+
+```bash
+cat /var/lib/misc/dnsmasq.leases
+```
+
+An empty file, with the checks above all healthy, means DHCP requests are
+not reaching the Pi at all. That narrows it to the access point:
+
+```bash
+ping -c 2 192.168.50.2
+```
+
+No reply means the access point is not on the Pi's LAN, which is almost
+always because the cable from the Pi is in its **WAN/Internet port** rather
+than a numbered **LAN port**. In the WAN port the access point routes
+instead of bridging, so its Wi-Fi becomes a separate network and DHCP never
+crosses. Since its own DHCP server is switched off by then, clients
+associate and get no address at all, which presents as "connected, no
+internet".
+
+To watch it happen, run this and connect a phone while it is going:
+
+```bash
+sudo tcpdump -i eth1 -n port 67 or port 68
+```
+
+Nothing appearing confirms the requests never reach the Pi. If you do see
+Discover lines, DHCP is arriving and the fault is elsewhere.
+
+Two other causes worth ruling out on the access point: its own DHCP server
+still being enabled, and its Wi-Fi being a **guest network**, which isolates
+clients from the wired LAN and blocks the Pi's DHCP just as effectively.
+
 ---
 
 ## Variants
@@ -796,11 +860,11 @@ captured normally.
   down. `Restart=always` covers crashes, not power loss or SD card
   corruption.
 - **Packet inspection costs more than forwarding.** Measured on a Pi 4B on
-  a 110 Mbps line, `--capture-mode full` reduced throughput to about
-  15 Mbps: Python cannot dissect 13,000 packets a second, and the pegged
-  CPU starves the kernel's forwarding path. `--capture-mode light` avoids
-  this by not looking at payload, at the cost of exact byte totals. Time
-  in categories is unaffected either way.
+  a 110 Mbps line: `--capture-mode full` gives about 15 Mbps, and
+  `--capture-mode light` about 100 Mbps. Python cannot dissect 13,000
+  packets a second, and the pegged CPU starves the kernel's forwarding
+  path. Light mode avoids this by not looking at payload, at the cost of
+  exact byte totals. Time in categories is unaffected either way.
 - **Device-to-device traffic may bypass the Pi.** A phone casting to a TV
   where both sit on the same access point is switched locally and never
   reaches the gateway. Only traffic crossing the Pi is visible.

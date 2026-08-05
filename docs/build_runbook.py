@@ -705,7 +705,8 @@ table([
      "copied into Python and taken apart by scapy, which costs far more per "
      "packet than the kernel spends forwarding it. On a 110 Mbps line that is "
      "roughly 13,000 packets a second: the CPU saturates, forwarding starves, "
-     "and measured throughput falls to about 15 Mbps. Light mode inspects only "
+     "and measured throughput falls to about 15 Mbps. The same line measures "
+     "about 100 Mbps in light mode, which inspects only "
      "what identifies devices, services and flow timing. Categories and time "
      "stay accurate; byte totals become an undercount."],
     ["<font face='Courier'>--history-db</font>",
@@ -857,6 +858,47 @@ table([
      "Expected. The LAN is single-stack by design. See Phase 4.1."],
 ], [58 * mm, 107 * mm])
 
+h3("Wi-Fi appears, but devices get no internet")
+
+p("The most common failure after the rebuild, and the one that looks worst "
+  "while being the smallest fault. Establish which half is broken before "
+  "changing anything, because the Pi is usually innocent.")
+
+p("Check the Pi first:")
+code("""
+ip -br addr
+ip route
+ping -c 3 1.1.1.1
+ping -c 3 google.com
+""")
+
+p("You want eth0 holding an address from router 1, eth1 on 192.168.50.1/24, "
+  "a default route out of eth0, and both pings succeeding. If all of that "
+  "holds, the Pi is fine and nothing on it needs touching: the fault is "
+  "between the Pi and your devices. Then check whether anything ever asked "
+  "it for an address:")
+code("""
+cat /var/lib/misc/dnsmasq.leases
+
+ping -c 2 192.168.50.2
+
+sudo tcpdump -i eth1 -n port 67 or port 68
+""")
+
+callout("An empty lease file with a healthy Pi means one thing",
+        "DHCP requests are not reaching the Pi at all. If 192.168.50.2 also "
+        "does not answer, the access point is not on the Pi's LAN, and the "
+        "cause is almost always that the cable from the Pi is in its "
+        "WAN/Internet port rather than a numbered LAN port. In the WAN port "
+        "it routes instead of bridging, so its Wi-Fi becomes a separate "
+        "network and DHCP never crosses. With its own DHCP server switched "
+        "off by then, clients associate and get no address at all, which "
+        "presents as \"connected, no internet\". Run the tcpdump while "
+        "connecting a phone: no output confirms it. Also rule out the access "
+        "point's own DHCP still being enabled, and its Wi-Fi being a guest "
+        "network, which isolates clients from the wired LAN just as "
+        "effectively.")
+
 h2("Things to know")
 
 bullets([
@@ -864,11 +906,11 @@ bullets([
     "network is down. Restart=always covers crashes, not power loss or SD "
     "card corruption.",
     "<b>Packet inspection costs more than forwarding.</b> Measured on a Pi "
-    "4B on a 110 Mbps line, --capture-mode full reduced throughput to "
-    "about 15 Mbps: Python cannot dissect 13,000 packets a second, and "
-    "the pegged CPU starves the kernel forwarding path. "
-    "--capture-mode light avoids this by not looking at payload, at the "
-    "cost of exact byte totals. Time in categories is unaffected.",
+    "4B on a 110 Mbps line: --capture-mode full gives about 15 Mbps, and "
+    "--capture-mode light about 100 Mbps. Python cannot dissect 13,000 "
+    "packets a second, and the pegged CPU starves the kernel forwarding "
+    "path. Light mode avoids this by not looking at payload, at the cost "
+    "of exact byte totals. Time in categories is unaffected.",
     "<b>Device-to-device traffic may bypass the Pi.</b> A phone casting to a "
     "TV, where both sit on router 2, is switched locally and never reaches "
     "the gateway. Only traffic crossing the Pi is visible.",
