@@ -52,6 +52,14 @@ CODE = ParagraphStyle("CODE", parent=ss["Code"], fontName="Courier",
                       fontSize=8.4, leading=11.4, textColor=INK,
                       backColor=CODE_BG, borderPadding=(6, 7, 6, 7),
                       leftIndent=0, spaceBefore=3, spaceAfter=8)
+# For the odd command that must stay on one line to be copied correctly.
+# Preformatted does not wrap, so an over-wide line is silently clipped and
+# the reader loses the end of the command, which is usually the important
+# part. Shrinking the type is the lesser evil against rewording it.
+CODE_NARROW = ParagraphStyle("CODE_NARROW", parent=ss["Code"], fontName="Courier",
+                             fontSize=7.6, leading=10.4, textColor=INK,
+                             backColor=CODE_BG, borderPadding=(6, 7, 6, 7),
+                             leftIndent=0, spaceBefore=3, spaceAfter=8)
 CALLOUT = ParagraphStyle("CALLOUT", parent=BODY, fontSize=9.5, leading=13.5,
                          textColor=INK, spaceAfter=0)
 FOOT = ParagraphStyle("FOOT", parent=ss["Normal"], fontName="Helvetica",
@@ -78,8 +86,8 @@ def bullets(items):
     story.append(Spacer(1, 4))
 
 
-def code(t):
-    story.append(Preformatted(t.strip("\n"), CODE))
+def code(t, style=CODE):
+    story.append(Preformatted(t.strip("\n"), style))
 
 
 def callout(title, text, colour=WARN, bg=WARN_BG):
@@ -230,38 +238,57 @@ callout("Why this matters",
 # ---------------------------------------------------------------- phase 3
 h2("Phase 3: Get the code onto the Pi")
 
-callout("Private repository",
-        "The Pi cannot clone a private GitHub repo without credentials. "
-        "Copying from your laptop avoids that entirely and skips the "
-        "virtual environment, which must be rebuilt for the Pi's "
-        "architecture anyway.",
+callout("Why copy instead of clone",
+        "The Pi cannot clone a private GitHub repo without credentials, and "
+        "copying from your laptop avoids setting those up on the Pi. It does "
+        "bring the laptop's virtual environment along, which is useless on "
+        "the Pi's architecture and has to be deleted and rebuilt: see the "
+        "warning further down.",
         colour=ACCENT, bg=colors.HexColor("#EEF7F3"))
 
-p("From your <b>laptop</b>:")
+p("From your <b>laptop</b>, in PowerShell. Substitute your own project path "
+  "and Pi username, and keep the quotes: the path contains a space, and "
+  "without them scp reads it as two arguments.")
 code(r"""
-scp -r "C:\Nathan Daily\Study\Projects\ActivityGraph\activitygraph" ^
-    <your-user>@activitygraph.local:~/activitygraph
-""")
+scp -r "C:\Nathan Daily\Study\Projects\ActivityGraph\activitygraph" nathan@activitygraph.local:~/
+""", CODE_NARROW)
 
-callout("Check where it actually landed",
-        "<font face='Courier'>scp -r src dest</font> copies <i>into</i> dest "
-        "when that directory already exists, nesting the project one level "
-        "deeper. On this machine the project root is "
-        "<font face='Courier'>~/activitygraph/activitygraph</font>. Confirm "
-        "with the find command below; the directory holding "
-        "<font face='Courier'>pyproject.toml</font> is the root, and every "
-        "later path is relative to it.",
-        colour=ACCENT, bg=colors.HexColor("#EEF7F3"))
+p("The destination is <font face='Courier'>~/</font> rather than "
+  "<font face='Courier'>~/activitygraph</font>, which makes the result "
+  "predictable. <font face='Courier'>scp -r</font> copies <i>into</i> a "
+  "destination that already exists, and your home directory always exists, "
+  "so the project lands at <font face='Courier'>~/activitygraph</font> every "
+  "time. That directory is the project root, and every later path in this "
+  "guide is relative to it. It legitimately contains a folder also named "
+  "<font face='Courier'>activitygraph</font>, which is the Python package: "
+  "that nested name is normal.")
 
-p("Then on the <b>Pi</b>:")
+callout("Run the copy once",
+        "Running it a second time copies into the project root instead, "
+        "leaving the real project at "
+        "<font face='Courier'>~/activitygraph/activitygraph</font> and "
+        "quietly breaking every path below. To re-copy, delete "
+        "<font face='Courier'>~/activitygraph</font> on the Pi first. The "
+        "transfer sends about 115 MB and takes a few minutes, almost all of "
+        "it the .venv folder you are about to throw away; scp has no exclude "
+        "option.")
+
+p("Then on the <b>Pi</b>, install the system packages:")
 code("""
 sudo apt update && sudo apt full-upgrade -y
 sudo apt install -y python3-pip python3-venv tcpdump dnsmasq nftables
+""")
 
-find ~ -name pyproject.toml -not -path '*/.venv/*' 2>/dev/null
+callout("rm -rf .venv is required, not optional",
+        "The copy brought your laptop's Windows virtualenv, which holds "
+        "Windows executables in a <font face='Courier'>Scripts</font> folder "
+        "where Linux expects <font face='Courier'>bin</font>. Left in place, "
+        "every <font face='Courier'>.venv/bin/...</font> command below fails "
+        "with a confusing \"No such file or directory\".")
 
-cd ~/activitygraph/activitygraph
-rm -rf .venv                 # the Windows virtualenv is useless on the Pi
+code("""
+cd ~/activitygraph
+rm -rf .venv
 python3 -m venv .venv
 .venv/bin/pip install -e .
 
@@ -273,6 +300,14 @@ p("The demo run needs no root and no network traffic. If it prints the "
   "<font face='Courier'>tcpdump</font> is installed because it brings in "
   "libpcap and gives you a second tool for checking what an interface is "
   "actually receiving.")
+
+p("If anything above could not find the project, confirm where it landed. "
+  "Whatever directory holds <font face='Courier'>pyproject.toml</font> is "
+  "the project root, and should be "
+  "<font face='Courier'>/home/&lt;you&gt;/activitygraph</font>. If it is one "
+  "level deeper, the copy ran twice: use the path it reports for the rest of "
+  "this guide, including the systemd unit in Phase 10.")
+code("find ~ -name pyproject.toml -not -path '*/.venv/*' 2>/dev/null")
 
 # ---------------------------------------------------------------- phase 4
 h2("Phase 4: Make the Pi a gateway")
