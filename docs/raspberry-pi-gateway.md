@@ -712,8 +712,8 @@ User=root
 WorkingDirectory=/opt/activitygraph
 ExecStart=/opt/activitygraph/.venv/bin/python -m activitygraph.main \
   --serve --serve-source live -i eth1 --host 0.0.0.0 --no-browser \
-  --accounts /opt/activitygraph/accounts.db --dhcp-leases \
-  --history-db /opt/activitygraph/history.db
+  --capture-mode light --accounts /opt/activitygraph/accounts.db \
+  --dhcp-leases --history-db /opt/activitygraph/history.db
 Restart=always
 RestartSec=10
 
