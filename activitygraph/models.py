@@ -8,9 +8,17 @@ from typing import Optional
 
 @dataclass
 class Device:
-    """A device on the local network, identified by IP/MAC."""
+    """A device on the local network, identified by its MAC.
+
+    One device commonly holds several addresses at once: an IPv4 lease, an
+    IPv6 link-local address, sometimes a second IPv4 after a lease change.
+    They are all listed in `addresses`, and `ip` is whichever is best to
+    show. Keying on the address instead would list a single phone two or
+    three times over, once per address it happens to hold.
+    """
 
     ip: str
+    addresses: list[str] = field(default_factory=list)
     mac: Optional[str] = None
     vendor: Optional[str] = None
     hostname: Optional[str] = None
@@ -36,6 +44,7 @@ class Device:
     def to_dict(self) -> dict:
         return {
             "ip": self.ip,
+            "addresses": self.addresses or [self.ip],
             "mac": self.mac,
             "vendor": self.vendor,
             "hostname": self.hostname,
