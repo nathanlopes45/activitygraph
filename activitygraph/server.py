@@ -281,22 +281,41 @@ def reachable_urls(host: str, port: int) -> list[str]:
     if not _is_wildcard(host):
         return [f"http://{host}:{port}"]
 
+    # 169.254.x.x means the interface asked for a DHCP lease and never got
+    # one, so it is not somewhere anybody can reach. Loopback goes last: it
+    # works, but only from the machine itself, and on a gateway the point of
+    # this list is to open the dashboard from a phone.
+    addresses = [a for a in _interface_addresses()
+                 if not a.startswith("127.") and not a.startswith("169.254.")]
+    addresses.append("127.0.0.1")
+    return [f"http://{address}:{port}" for address in addresses]
+
+
+def _interface_addresses() -> list[str]:
+    """Every IPv4 address this machine actually holds, one per interface.
+
+    Resolving the hostname is the usual shortcut for this and it is wrong.
+    Debian and Raspberry Pi OS map the hostname to 127.0.1.1 in /etc/hosts,
+    so on a Pi gateway -- the machine this whole feature exists for -- it
+    yields two loopback addresses and nothing anyone can browse to.
+
+    scapy is already a hard dependency and reports per-interface addresses
+    directly, which is what "reachable" actually means here.
+    """
     addresses: list[str] = []
     try:
-        import socket
+        from scapy.all import get_if_addr, get_if_list
 
-        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
-            address = info[4][0]
-            if address not in addresses:
+        for interface in get_if_list():
+            try:
+                address = get_if_addr(interface)
+            except Exception:
+                continue  # interface with no IPv4 address, or gone since listing
+            if address and address != "0.0.0.0" and address not in addresses:
                 addresses.append(address)
     except Exception:
         pass
-
-    # Loopback always works locally and is a useful fallback when the
-    # hostname does not resolve to anything.
-    if "127.0.0.1" not in addresses:
-        addresses.append("127.0.0.1")
-    return [f"http://{address}:{port}" for address in addresses]
+    return addresses
 
 
 def serve(pipeline, live: bool = False, host: str = "127.0.0.1", port: int = 8420, open_browser: bool = True, history_store=None, capture=None,
