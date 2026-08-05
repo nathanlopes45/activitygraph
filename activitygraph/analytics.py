@@ -20,19 +20,29 @@ def rank_devices(flows: list[Flow], devices: list[Device]) -> list[dict]:
     device used, period," which should count replies too.
     """
     totals: dict[str, dict] = {}
-    device_by_ip = {d.ip: d for d in devices}
+    # Every address, not just the primary one: a device holding both an
+    # IPv4 lease and an IPv6 address would otherwise have half its flows
+    # attributed to nobody.
+    device_by_ip = {address: d for d in devices for address in (d.addresses or [d.ip])}
 
+    # Totals are accumulated per *device*, not per address. A phone holding
+    # an IPv4 lease and an IPv6 address would otherwise be ranked twice, with
+    # its usage split between the two rows.
     for flow in flows:
+        counted = set()
         for ip in (flow.src_ip, flow.dst_ip):
-            if ip not in device_by_ip:
+            device = device_by_ip.get(ip)
+            if device is None or id(device) in counted:
                 continue
-            bucket = totals.setdefault(ip, {"byte_count": 0, "flow_count": 0})
+            counted.add(id(device))
+            bucket = totals.setdefault(device.ip, {"byte_count": 0, "flow_count": 0,
+                                                   "device": device})
             bucket["byte_count"] += flow.byte_count
             bucket["flow_count"] += 1
 
     ranked = []
     for ip, bucket in totals.items():
-        device = device_by_ip[ip]
+        device = bucket["device"]
         ranked.append({
             "device_ip": ip,
             "display_name": device.display_name(),

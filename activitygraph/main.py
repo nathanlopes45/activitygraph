@@ -39,6 +39,15 @@ from .time_analytics import (
 )
 
 
+def _all_addresses(devices) -> set:
+    """Every address held by any of these devices.
+
+    Flows are matched by address while devices are keyed by MAC, so the
+    join between them has to consider all of a device's addresses.
+    """
+    return {address for d in devices for address in (d.addresses or [d.ip])}
+
+
 class Pipeline:
     def __init__(self, idle_timeout_seconds: float = 30.0, llm_classifier=None, session_gap_seconds: float = 300.0, device_aliases=None, active_resolve: bool = False, device_groups=None, min_activity_seconds: float = DEFAULT_MIN_ACTIVITY_SECONDS, taxonomy=None, name_store=None) -> None:
         self.groups = GroupRegistry(device_groups)
@@ -65,7 +74,7 @@ class Pipeline:
 
     def sessions(self, local_ips=None) -> list[Session]:
         if local_ips is None:
-            local_ips = {d.ip for d in self.devices.all_devices()}
+            local_ips = _all_addresses(self.devices.all_devices())
         return group_into_sessions(self.flows.all_flows(), local_ips, session_gap_seconds=self.session_gap_seconds)
 
     def summary(self, visible_macs=None, only_macs=None, only_services=None) -> dict:
@@ -96,7 +105,7 @@ class Pipeline:
         if visible_macs is not None:
             allowed = {m.upper() for m in visible_macs}
             devices = [d for d in devices if (d.mac or "").upper() in allowed]
-            visible_ips = {d.ip for d in devices}
+            visible_ips = _all_addresses(devices)
             flows = [f for f in flows
                      if f.src_ip in visible_ips or f.dst_ip in visible_ips]
 
@@ -111,7 +120,7 @@ class Pipeline:
         if only_macs:
             chosen = {m.upper() for m in only_macs}
             devices = [d for d in devices if (d.mac or "").upper() in chosen]
-            chosen_ips = {d.ip for d in devices}
+            chosen_ips = _all_addresses(devices)
             flows = [f for f in flows
                      if f.src_ip in chosen_ips or f.dst_ip in chosen_ips]
 
@@ -122,7 +131,8 @@ class Pipeline:
             # list at zero, which reads as "used it for no time" rather than
             # "did not use it".
             active_ips = {f.src_ip for f in flows} | {f.dst_ip for f in flows}
-            devices = [d for d in devices if d.ip in active_ips]
+            devices = [d for d in devices
+                       if any(a in active_ips for a in (d.addresses or [d.ip]))]
 
         by_category: dict[str, dict] = {}
         for f in flows:
@@ -135,7 +145,7 @@ class Pipeline:
         for bucket in by_category.values():
             bucket["services"] = sorted(bucket["services"])
 
-        local_ips = {d.ip for d in devices}
+        local_ips = _all_addresses(devices)
 
         return {
             "generated_at": datetime.now(timezone.utc).isoformat(),

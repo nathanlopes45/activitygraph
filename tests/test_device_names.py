@@ -218,3 +218,92 @@ def test_the_lease_name_is_kept_when_nothing_better_arrives():
     registry = DeviceRegistry()
     registry.observe(lease_entry("192.168.50.80", "Android_PC02UL3Q"))
     assert registry.get("192.168.50.80").display_name() == "Android_PC02UL3Q"
+
+
+# ---------------- one device, one entry ----------------
+
+# A device holds several addresses at once: an IPv4 lease, an IPv6
+# link-local address, sometimes a second IPv4 after a lease change. Keying
+# entries on the address listed a single phone two or three times over.
+
+def at(ip, mac=MAC, hint=None, source=None):
+    return Packet(timestamp=NOW, src_ip=ip, dst_ip="192.168.50.1", proto="UDP",
+                  length=100, src_mac=mac, hostname_hint=hint, hostname_source=source)
+
+
+def test_a_phone_with_ipv4_and_ipv6_is_one_device():
+    """The reported bug: an iPhone and an Android each appeared twice, once
+    per address family."""
+    registry = DeviceRegistry()
+    registry.observe(at("192.168.50.50", hint="iPhone", source="dhcp"))
+    registry.observe(at("fe80::1cc9:2fe8:995:5c9"))
+
+    assert len(registry.all_devices()) == 1
+    device = registry.all_devices()[0]
+    assert set(device.addresses) == {"192.168.50.50", "fe80::1cc9:2fe8:995:5c9"}
+
+
+def test_the_routable_address_is_the_one_displayed():
+    """A link-local address identifies nothing to a person reading it."""
+    registry = DeviceRegistry()
+    registry.observe(at("fe80::1cc9:2fe8:995:5c9"))
+    registry.observe(at("192.168.50.50"))
+    assert registry.all_devices()[0].ip == "192.168.50.50"
+
+
+def test_a_device_is_found_by_any_of_its_addresses():
+    """Claiming resolves the caller's source address to a device, and a
+    phone may well reach the dashboard over IPv6."""
+    registry = DeviceRegistry()
+    registry.observe(at("192.168.50.50", hint="iPhone", source="dhcp"))
+    registry.observe(at("fe80::1cc9:2fe8:995:5c9"))
+
+    by_v4 = registry.get("192.168.50.50")
+    by_v6 = registry.get("fe80::1cc9:2fe8:995:5c9")
+    assert by_v4 is by_v6, "both addresses must resolve to the same device"
+
+
+def test_two_addresses_on_one_nic_do_not_make_two_devices():
+    """The gateway answered on its upstream address over the LAN interface,
+    so the Pi itself was listed twice."""
+    registry = DeviceRegistry()
+    registry.observe(at("192.168.1.106", mac="PI:00:00:00:00:01"))
+    registry.observe(at("192.168.50.1", mac="PI:00:00:00:00:01"))
+    assert len(registry.all_devices()) == 1
+
+
+def test_different_macs_stay_separate():
+    """The collapse must key on identity, not merge everything in sight."""
+    registry = DeviceRegistry()
+    registry.observe(at("192.168.50.50", mac="AA:BB:CC:00:00:01"))
+    registry.observe(at("192.168.50.51", mac="AA:BB:CC:00:00:02"))
+    assert len(registry.all_devices()) == 2
+
+
+def test_a_device_without_a_mac_is_still_tracked_by_address():
+    """Lease and router imports can arrive without one."""
+    registry = DeviceRegistry()
+    registry.observe(Packet(timestamp=NOW, src_ip="192.168.50.99", dst_ip="1.1.1.1",
+                            proto="UDP", length=100, src_mac="", hostname_hint=None))
+    assert registry.get("192.168.50.99") is None  # no MAC, no source pairing
+
+
+def test_flows_on_either_address_count_toward_the_same_device():
+    """The join between flows and devices is by address, so a device whose
+    traffic is split across two of them must not lose half of it."""
+    from activitygraph.analytics import rank_devices
+    from activitygraph.models import Flow
+
+    registry = DeviceRegistry()
+    registry.observe(at("192.168.50.50", hint="iPhone", source="dhcp"))
+    registry.observe(at("fe80::1cc9:2fe8:995:5c9"))
+
+    flows = [
+        Flow(src_ip="192.168.50.50", dst_ip="1.1.1.1", src_port=1, dst_port=443,
+             proto="TCP", byte_count=1000, packet_count=1, start_time=NOW, end_time=NOW),
+        Flow(src_ip="fe80::1cc9:2fe8:995:5c9", dst_ip="2001:db8::1", src_port=2, dst_port=443,
+             proto="TCP", byte_count=500, packet_count=1, start_time=NOW, end_time=NOW),
+    ]
+    ranked = rank_devices(flows, registry.all_devices())
+    assert len(ranked) == 1
+    assert ranked[0]["byte_count"] == 1500, "traffic on the second address was dropped"

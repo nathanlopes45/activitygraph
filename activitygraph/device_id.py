@@ -65,6 +65,21 @@ def _is_local_ip(ip: str) -> bool:
         return False
 
 
+def _primary_address(addresses: list[str]) -> str:
+    """Which of a device's addresses to show as *the* one.
+
+    Routable IPv4 first, because that is the address a person recognises
+    and the one the rest of the network refers to the device by. An IPv6
+    link-local address is real but useless for identifying anything, so it
+    only wins when there is nothing else.
+    """
+    routable_v4 = [a for a in addresses if not _is_ipv6(a) and not a.startswith("169.254.")]
+    if routable_v4:
+        return routable_v4[0]
+    non_link_local = [a for a in addresses if not a.lower().startswith("fe80:")]
+    return (non_link_local or addresses)[0]
+
+
 def _is_addressable(ip: str) -> bool:
     """False for addresses that cannot belong to a device.
 
@@ -178,7 +193,8 @@ class DeviceRegistry:
         run_async: Optional[Callable[[Callable[[], None]], None]] = None,
         groups: Optional[GroupRegistry] = None,
     ) -> None:
-        self._devices: dict[str, Device] = {}  # keyed by IP
+        self._devices: dict[str, Device] = {}   # keyed by MAC, or address if unknown
+        self._by_address: dict[str, Device] = {}  # every address -> its device
         self._aliases = {_normalize_mac(mac): name for mac, name in (aliases or {}).items()}
         self._groups = groups or GroupRegistry()
         self._active_resolve = active_resolve
@@ -293,22 +309,37 @@ class DeviceRegistry:
         if mac in self._router_macs:
             return
         self._router_macs.add(mac)
-        for ip in [ip for ip, device in self._devices.items()
-                   if _normalize_mac(device.mac or "") == mac and not _is_local_ip(ip)]:
-            del self._devices[ip]
+        stale = [address for address, device in self._by_address.items()
+                 if _normalize_mac(device.mac or "") == mac and not _is_local_ip(address)]
+        for address in stale:
+            device = self._by_address.pop(address)
+            if address in device.addresses:
+                device.addresses.remove(address)
+            if device.addresses:
+                device.ip = _primary_address(device.addresses)
+            else:
+                self._devices.pop(_normalize_mac(device.mac or "") or device.ip, None)
 
     def _touch(self, ip: str, mac: str, when: datetime, hostname_hint: Optional[str] = None,
                hostname_source: Optional[str] = None) -> None:
-        device = self._devices.get(ip)
+        # A device is its MAC. The address is only how it was reached this
+        # time, and one device holds several at once.
+        identity = _normalize_mac(mac) if mac else ip
+        device = self._devices.get(identity)
         is_new = device is None
         if device is None:
-            device = Device(ip=ip, mac=mac, vendor=lookup_vendor(mac), first_seen=when, last_seen=when)
-            self._devices[ip] = device
+            device = Device(ip=ip, addresses=[ip], mac=mac,
+                            vendor=lookup_vendor(mac), first_seen=when, last_seen=when)
+            self._devices[identity] = device
         else:
             if not device.mac:
                 device.mac = mac
                 device.vendor = lookup_vendor(mac)
+            if ip not in device.addresses:
+                device.addresses.append(ip)
+                device.ip = _primary_address(device.addresses)
             device.touch(when)
+        self._by_address[ip] = device
 
         best = self._remember_name(mac, hostname_hint, hostname_source, fallback_key=ip)
         if best is not None:
@@ -339,7 +370,7 @@ class DeviceRegistry:
             name = self._resolver(ip)
             if not name:
                 return
-            device = self._devices.get(ip)
+            device = self._by_address.get(ip)
             if device is None:
                 return
             # Re-check the score rather than the name: a passive hint may
@@ -354,7 +385,8 @@ class DeviceRegistry:
         self._run_async(resolve_and_apply)
 
     def get(self, ip: str) -> Optional[Device]:
-        return self._devices.get(ip)
+        """The device holding this address, whichever of its addresses it is."""
+        return self._by_address.get(ip)
 
     def all_devices(self) -> list[Device]:
         return sorted(self._devices.values(), key=lambda d: d.ip)
