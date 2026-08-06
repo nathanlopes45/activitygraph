@@ -58,7 +58,8 @@ def _split_filter(raw: str, limit: int) -> list[str]:
 
 def create_app(pipeline, live: bool = False, history_store=None, capture=None,
                accounts: 'AccountStore | None' = None, secret: bytes = b"",
-               active_within_seconds: float | None = None) -> FastAPI:
+               active_within_seconds: float | None = None,
+               include_background: bool = False) -> FastAPI:
     """Build the FastAPI app around an existing Pipeline instance.
 
     In live mode, a background thread should already be feeding packets
@@ -259,6 +260,7 @@ def create_app(pipeline, live: bool = False, history_store=None, capture=None,
             only_macs=_split_filter(devices, limit=MAX_FILTER_VALUES),
             only_services=_split_filter(services, limit=MAX_FILTER_VALUES),
             active_within_seconds=active_within_seconds,
+            include_background=include_background,
         )
         data["mode"] = "live" if live else "demo"
         data["viewer"] = {
@@ -366,7 +368,8 @@ def _interface_addresses() -> list[str]:
 
 
 def serve(pipeline, live: bool = False, host: str = "127.0.0.1", port: int = 8420, open_browser: bool = True, history_store=None, capture=None,
-          accounts=None, secret: bytes = b"", active_within_seconds: float | None = None) -> None:
+          accounts=None, secret: bytes = b"", active_within_seconds: float | None = None,
+          include_background: bool = False) -> None:
     """Blocking call: starts the dashboard server. Ctrl-C to stop."""
     import uvicorn
 
@@ -387,7 +390,8 @@ def serve(pipeline, live: bool = False, host: str = "127.0.0.1", port: int = 842
 
     app = create_app(pipeline, live=live, history_store=history_store, capture=capture,
                      accounts=accounts, secret=secret,
-                     active_within_seconds=active_within_seconds)
+                     active_within_seconds=active_within_seconds,
+                     include_background=include_background)
 
     urls = reachable_urls(host, port)
 

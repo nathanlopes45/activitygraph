@@ -28,6 +28,7 @@ from .flow_processor import FlowProcessor
 from .llm_classifier import LocalLLMClassifier
 from .models import Packet
 from .service_detector import ServiceDetector
+from .service_rules import BACKGROUND_CATEGORIES
 from .taxonomy import TaxonomyRegistry, load_taxonomy
 from .time_analytics import (
     DEFAULT_MIN_ACTIVITY_SECONDS,
@@ -78,7 +79,7 @@ class Pipeline:
         return group_into_sessions(self.flows.all_flows(), local_ips, session_gap_seconds=self.session_gap_seconds)
 
     def summary(self, visible_macs=None, only_macs=None, only_services=None,
-                active_within_seconds=None) -> dict:
+                active_within_seconds=None, include_background=False) -> dict:
         """Everything the dashboard renders.
 
         `visible_macs` limits the result to devices with those MAC addresses,
@@ -145,8 +146,18 @@ class Pipeline:
             devices = [d for d in devices
                        if any(a in active_ips for a in (d.addresses or [d.ip]))]
 
+        # Everything derived below describes chosen activity, so the plumbing
+        # comes out first: DNS, DHCP, clock sync, update checks, ad beacons.
+        # The raw flows keep all of it, and the totals for what was set aside
+        # are reported, so nothing disappears without saying so.
+        if include_background:
+            activity, background = flows, []
+        else:
+            activity = [f for f in flows if f.category not in BACKGROUND_CATEGORIES]
+            background = [f for f in flows if f.category in BACKGROUND_CATEGORIES]
+
         by_category: dict[str, dict] = {}
-        for f in flows:
+        for f in activity:
             cat = f.category or "Uncategorized"
             bucket = by_category.setdefault(cat, {"flow_count": 0, "byte_count": 0, "services": set()})
             bucket["flow_count"] += 1
@@ -177,13 +188,21 @@ class Pipeline:
                                   & {d["mac"] for d in available_devices}),
                 "services": sorted(set(only_services or []) & set(available_services)),
             },
+            "background": {
+                "categories": sorted(BACKGROUND_CATEGORIES),
+                "flow_count": len(background),
+                "byte_count": sum(f.byte_count for f in background),
+                "included": include_background,
+            },
             "devices": [d.to_dict() for d in devices],
             "flows": [f.to_dict() for f in flows],
-            "sessions": [s.to_dict() for s in self.sessions(local_ips)],
+            "sessions": [s.to_dict() for s in
+                         group_into_sessions(activity, local_ips,
+                                            session_gap_seconds=self.session_gap_seconds)],
             "category_breakdown": by_category,
-            "ranked_devices": rank_devices(flows, devices),
-            "ranked_services": rank_services(flows),
-            "ranked_categories": rank_categories(flows),
+            "ranked_devices": rank_devices(activity, devices),
+            "ranked_services": rank_services(activity),
+            "ranked_categories": rank_categories(activity),
             "groups": [
                 {"name": name, "device_ips": [d.ip for d in members], "device_count": len(members)}
                 for name, members in sorted(self.groups.devices_by_group(devices).items())
@@ -196,10 +215,10 @@ class Pipeline:
                 # two things at once -- we can't know which had the user's
                 # attention, so both numbers are reported rather than one
                 # being invented.
-                "total_active_seconds": total_active_seconds(flows, local_ips, self.min_activity_seconds),
-                "by_category": time_by_category_nested(flows, local_ips, self.taxonomy, self.min_activity_seconds),
-                "by_group": time_by_group(flows, devices, self.min_activity_seconds),
-                "by_device": time_by_device(flows, devices, self.min_activity_seconds),
+                "total_active_seconds": total_active_seconds(activity, local_ips, self.min_activity_seconds),
+                "by_category": time_by_category_nested(activity, local_ips, self.taxonomy, self.min_activity_seconds),
+                "by_group": time_by_group(activity, devices, self.min_activity_seconds),
+                "by_device": time_by_device(activity, devices, self.min_activity_seconds),
             },
         }
 
@@ -436,6 +455,13 @@ def main() -> None:
                               "{\"brand\": \"tplink\", \"host\": \"192.168.1.1\", \"username\": \"admin\", "
                               "\"password\": \"...\"}. Kept in its own file (not a CLI argument) so the "
                               "password never lands in shell history. Currently supported brands: tplink.")
+    parser.add_argument("--show-background", action="store_true",
+                         help="Include machine traffic in the headline panels: DNS, DHCP, "
+                              "clock sync, OS and browser update checks, ad and analytics "
+                              "beacons. Left out by default because none of it is something "
+                              "a person did, and DNS in particular appears on every device "
+                              "and crowds out the answer to where the time went. The raw "
+                              "flow list always shows everything either way.")
     parser.add_argument("--active-within", type=float, default=None, metavar="MINUTES",
                          help="Show only what has been active in the last MINUTES. A gateway "
                               "runs for weeks, and without this the dashboard accumulates "
@@ -539,7 +565,7 @@ def main() -> None:
             if history_store is not None:
                 history_store.record_sessions_from_summary(pipeline.summary())
                 history_store.record_time_from_pipeline(pipeline)
-            serve(pipeline, live=False, host=args.host, port=args.port, open_browser=not args.no_browser, history_store=history_store, accounts=accounts, secret=secret, active_within_seconds=active_window)
+            serve(pipeline, live=False, host=args.host, port=args.port, open_browser=not args.no_browser, history_store=history_store, accounts=accounts, secret=secret, active_within_seconds=active_window, include_background=args.show_background)
         else:
             # The history database doubles as the learned IP -> hostname
             # store, so a restarted gateway keeps recognising services it
@@ -555,7 +581,7 @@ def main() -> None:
             except PermissionError:
                 print("Live capture requires elevated privileges (try running with sudo).", file=sys.stderr)
                 sys.exit(1)
-            serve(pipeline, live=True, host=args.host, port=args.port, open_browser=not args.no_browser, history_store=history_store, capture=capture, accounts=accounts, secret=secret, active_within_seconds=active_window)
+            serve(pipeline, live=True, host=args.host, port=args.port, open_browser=not args.no_browser, history_store=history_store, capture=capture, accounts=accounts, secret=secret, active_within_seconds=active_window, include_background=args.show_background)
         return
     else:
         parser.error("no mode selected")
