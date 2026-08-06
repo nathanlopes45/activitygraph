@@ -126,31 +126,6 @@ class Pipeline:
             flows = [f for f in flows
                      if f.src_ip in visible_ips or f.dst_ip in visible_ips]
 
-        # The viewer's own narrowing, applied second so it can only ever
-        # subtract from what the permission check already allowed.
-        available_services = sorted({f.service for f in flows if f.service})
-        available_devices = [
-            {"mac": (d.mac or "").upper(), "name": d.display_name(), "ip": d.ip}
-            for d in devices
-        ]
-
-        if only_macs:
-            chosen = {m.upper() for m in only_macs}
-            devices = [d for d in devices if (d.mac or "").upper() in chosen]
-            chosen_ips = _all_addresses(devices)
-            flows = [f for f in flows
-                     if f.src_ip in chosen_ips or f.dst_ip in chosen_ips]
-
-        if only_services:
-            wanted = set(only_services)
-            flows = [f for f in flows if f.service in wanted]
-            # Devices with nothing left to show would otherwise sit in the
-            # list at zero, which reads as "used it for no time" rather than
-            # "did not use it".
-            active_ips = {f.src_ip for f in flows} | {f.dst_ip for f in flows}
-            devices = [d for d in devices
-                       if any(a in active_ips for a in (d.addresses or [d.ip]))]
-
         # Everything derived below describes chosen activity, so the plumbing
         # comes out first: DNS, DHCP, clock sync, update checks, ad beacons.
         # The raw flows keep all of it, and the totals for what was set aside
@@ -160,6 +135,37 @@ class Pipeline:
         else:
             activity = [f for f in flows if f.category not in BACKGROUND_CATEGORIES]
             background = [f for f in flows if f.category in BACKGROUND_CATEGORIES]
+
+        # The viewer's own narrowing, applied second so it can only ever
+        # subtract from what the permission check already allowed. Drawn from
+        # `activity`, so the filter never offers a service the panels below
+        # will not show: DNS as a chip that empties the dashboard is worse
+        # than no chip at all.
+        available_services = sorted({f.service for f in activity if f.service})
+        available_devices = [
+            {"mac": (d.mac or "").upper(), "name": d.display_name(), "ip": d.ip}
+            for d in devices
+        ]
+
+        if only_macs:
+            chosen = {m.upper() for m in only_macs}
+            devices = [d for d in devices if (d.mac or "").upper() in chosen]
+            chosen_ips = _all_addresses(devices)
+            keep = lambda f: f.src_ip in chosen_ips or f.dst_ip in chosen_ips
+            flows = [f for f in flows if keep(f)]
+            activity = [f for f in activity if keep(f)]
+            background = [f for f in background if keep(f)]
+
+        if only_services:
+            wanted = set(only_services)
+            flows = [f for f in flows if f.service in wanted]
+            activity = [f for f in activity if f.service in wanted]
+            # Devices with nothing left to show would otherwise sit in the
+            # list at zero, which reads as "used it for no time" rather than
+            # "did not use it".
+            active_ips = {f.src_ip for f in activity} | {f.dst_ip for f in activity}
+            devices = [d for d in devices
+                       if any(a in active_ips for a in (d.addresses or [d.ip]))]
 
         by_category: dict[str, dict] = {}
         for f in activity:

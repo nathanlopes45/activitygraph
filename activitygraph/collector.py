@@ -62,6 +62,14 @@ LIGHT_FILTER = (
     " and (tcp[((tcp[12:1] & 0xf0) >> 2):4] = 0x47455420"
     " or tcp[((tcp[12:1] & 0xf0) >> 2):4] = 0x504f5354))"
     " or (udp and port 443 and less 400)"
+    # A liveness sample, and the reason durations are right in this mode.
+    # A device's outbound direction sends nothing between its request and
+    # its FIN while a download runs, so with the rules above alone the flow
+    # looks idle, gets closed after --idle-timeout, and a ten-minute video
+    # is recorded as a few seconds. The IP identification field varies per
+    # packet, so masking its low bits admits roughly one packet in thirty
+    # two: enough to keep a flow alive, cheap enough not to matter.
+    " or (tcp and (ip[4:2] & 0x1f) = 0)"
 )
 
 CAPTURE_MODES = {"full": FULL_FILTER, "light": LIGHT_FILTER}

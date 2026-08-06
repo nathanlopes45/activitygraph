@@ -1381,7 +1381,15 @@ function summaryQuery() {
 
 function chip(label, isOn, onToggle) {
   const node = el("button", { class: isOn ? "chip on" : "chip", type: "button" }, label);
-  node.addEventListener("click", () => { onToggle(); refresh(); });
+  node.addEventListener("click", () => {
+    onToggle();
+    // Repaint this chip immediately rather than waiting for the round trip
+    // to redraw the row. Without it the first click looks like it did
+    // nothing and people click again, which toggles the filter straight
+    // back off and reads as needing a double click.
+    node.classList.toggle("on");
+    refresh();
+  });
   return node;
 }
 

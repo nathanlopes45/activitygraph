@@ -265,3 +265,71 @@ def test_the_raw_flow_list_keeps_everything():
     pipeline = run_demo(idle_timeout=5.0)
     assert len(pipeline.summary()["flows"]) == \
         len(pipeline.summary(include_background=True)["flows"])
+
+
+# ---------------- services sharing a CDN ----------------
+
+def _music_then_stream(gap_minutes):
+    """A device uses YouTube Music, then streams from the shared CDN."""
+    from datetime import timedelta
+
+    from activitygraph.models import Packet
+    from activitygraph.service_detector import ServiceDetector
+
+    now = datetime(2026, 8, 4, 12, 0, tzinfo=timezone.utc)
+    detector = ServiceDetector()
+    detector.observe(Packet(timestamp=now, src_ip="192.168.50.20", dst_ip="1.1.1.1",
+                            proto="TCP", length=500, src_port=5001, dst_port=443,
+                            tls_sni="music.youtube.com"))
+    detector.observe(dns_packet("rr1---sn-abc.googlevideo.com", "142.250.66.238"))
+
+    when = now + timedelta(minutes=gap_minutes)
+    stream = Flow(src_ip="192.168.50.20", dst_ip="142.250.66.238", src_port=5000,
+                  dst_port=443, proto="TCP", byte_count=900000, packet_count=600,
+                  start_time=when, end_time=when)
+    return detector.classify(stream)
+
+
+def test_audio_from_the_shared_cdn_is_attributed_to_youtube_music():
+    """YouTube Music streams audio from googlevideo.com, exactly as YouTube
+    streams video, so the hostname alone cannot tell them apart. Every
+    minute of listening was being filed as watching."""
+    assert _music_then_stream(2).service == "YouTube Music"
+
+
+def test_the_attribution_expires_rather_than_lasting_forever():
+    """Otherwise one visit to YouTube Music would relabel every video that
+    device ever streams."""
+    assert _music_then_stream(40).service == "YouTube"
+
+
+def test_a_device_that_never_used_music_still_gets_youtube():
+    from activitygraph.service_detector import ServiceDetector
+
+    detector = ServiceDetector()
+    detector.observe(dns_packet("rr1---sn-abc.googlevideo.com", "142.250.66.238"))
+    assert detector.classify(quic_flow("142.250.66.238")).service == "YouTube"
+
+
+def test_music_youtube_itself_is_unambiguous():
+    assert match("music.youtube.com").service == "YouTube Music"
+
+
+# ---------------- plumbing is not offered as a filter ----------------
+
+def test_the_filter_does_not_offer_services_the_panels_will_not_show():
+    """A DNS chip that empties the dashboard when clicked is worse than no
+    chip: it offers a choice the rest of the page cannot honour."""
+    from activitygraph.main import run_demo
+
+    offered = run_demo(idle_timeout=5.0).summary()["filter_options"]["services"]
+    assert "DNS" not in offered
+    assert "DHCP" not in offered
+
+
+def test_showing_background_traffic_also_offers_it_as_a_filter():
+    from activitygraph.main import run_demo
+
+    offered = run_demo(idle_timeout=5.0).summary(
+        include_background=True)["filter_options"]["services"]
+    assert "DNS" in offered
