@@ -529,7 +529,9 @@ def main() -> None:
             pipeline = Pipeline(idle_timeout_seconds=args.idle_timeout, llm_classifier=llm_classifier, session_gap_seconds=args.session_gap, device_aliases=device_aliases, active_resolve=args.active_resolve, device_groups=device_groups, min_activity_seconds=args.min_activity_seconds, taxonomy=taxonomy, name_store=history_store, exclude_macs=excluded_macs)
             # Grouping and min-activity live on the Pipeline itself, so
             # BackgroundCapture doesn't need to know about them.
-            capture = BackgroundCapture(pipeline, interface=args.interface, history_store=history_store, arp_sweep=args.arp_sweep, arp_sweep_subnet=args.arp_sweep_subnet, arp_sweep_timeout=args.arp_sweep_timeout, router_devices=args.router_devices, router_credentials=args.router_credentials, dhcp_leases=args.dhcp_leases, bpf_filter=capture_filter, exclude_macs=excluded_macs)
+            # No exclude_macs here: it belongs to the device registry, which
+            # the pipeline above already owns.
+            capture = BackgroundCapture(pipeline, interface=args.interface, history_store=history_store, arp_sweep=args.arp_sweep, arp_sweep_subnet=args.arp_sweep_subnet, arp_sweep_timeout=args.arp_sweep_timeout, router_devices=args.router_devices, router_credentials=args.router_credentials, dhcp_leases=args.dhcp_leases, bpf_filter=capture_filter)
             try:
                 capture.start()
             except PermissionError:
