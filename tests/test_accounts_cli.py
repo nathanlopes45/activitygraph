@@ -123,3 +123,47 @@ def test_account_names_are_not_interpolated_into_html(page):
         if "innerHTML" not in line or line.strip().startswith("//"):
             continue
         assert 'innerHTML = ""' in line, f"unexpected innerHTML assignment: {line.strip()}"
+
+
+# ---------------- page structure ----------------
+
+# The dashboard is one long page, so what is folded away and what is not is
+# the difference between it reading as a summary or as a data dump.
+
+def test_the_filter_is_collapsed_until_asked_for(page):
+    """A tool you reach for, not something to read on the way past."""
+    assert '<details class="fold" id="filter-bar" hidden>' in page
+    assert '<details class="fold" id="filter-bar" hidden open>' not in page
+
+
+def test_stats_for_nerds_is_collapsed_and_holds_the_raw_material(page):
+    """Sessions and flows are what everything above is derived from:
+    interesting when something looks wrong, noise the rest of the time."""
+    assert '<details class="fold" id="nerd-stats">' in page
+
+    fold = page.split('id="nerd-stats"')[1].split("</details>")[0]
+    assert 'id="sessions"' in fold
+    assert 'id="flows-body"' in fold
+    assert "open>" not in fold.split(">")[0] + ">"
+
+
+def test_history_stays_out_of_the_folded_section(page):
+    """It answers "how am I doing", which is the point of the tool, not
+    diagnostics."""
+    fold = page.split('id="nerd-stats"')[1].split("</details>")[0]
+    assert 'id="history"' not in fold
+
+
+def test_this_device_is_its_own_panel_above_the_group(page):
+    """It answers a different question from the group: not "what am I
+    tracking" but "what is this thing I am holding"."""
+    assert 'id="this-device-panel"' in page
+    assert page.index('id="this-device-panel"') < page.index('id="my-devices-panel"')
+
+
+def test_the_folds_use_native_disclosure_rather_than_a_scripted_toggle(page):
+    """<details> brings keyboard access and open/closed state for free, and
+    leaves the content in the DOM for anyone who goes looking."""
+    for section in ("filter-bar", "nerd-stats"):
+        opening = page.split(f'id="{section}"')[0].rsplit("<", 1)[1]
+        assert opening.startswith("details"), f"{section} is not a <details>"
