@@ -410,6 +410,23 @@
   .fold .panel { background: none; border: 0; padding: 0; margin-bottom: 22px; }
   .fold .panel:last-child { margin-bottom: 0; }
 
+  /* A device that has left the network is still a device on it, so it stays
+     in the list. Dimmed rather than removed: present but not doing
+     anything, which is the actual situation. */
+  .device-row.offline .device-name,
+  .device-row.offline .device-meta { opacity: 0.45; }
+  .offline-tag {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 5px;
+    margin-left: 8px;
+  }
+
   /* ---------------- this device ---------------- */
 
   .this-device-head {
@@ -874,11 +891,19 @@ function renderGraph(data) {
   const container = document.getElementById("graph");
   container.innerHTML = "";
 
-  const devices = data.devices || [];
   const sessions = (data.sessions || []).slice(0, 10);
 
+  // Only devices still on the network. A phone that has gone home is still
+  // listed in the Devices panel, because it is still a device on this
+  // network, but drawing it here with nothing attached reads as "idle" when
+  // the truth is "gone". What it did earlier is in the History panel.
+  const devices = (data.devices || []).filter(d => d.active !== false);
+
   if (devices.length === 0) {
-    container.appendChild(el("div", { class: "empty-state" }, "No devices observed yet."));
+    container.appendChild(el("div", { class: "empty-state" },
+      (data.devices || []).length
+        ? "Nothing active right now."
+        : "No devices observed yet."));
     return;
   }
 
@@ -1173,10 +1198,18 @@ function renderDevices(data) {
   const secondsByIp = {};
   ((data.time_totals || {}).by_device || []).forEach(r => { secondsByIp[r.device_ip] = r.seconds; });
 
-  devices.forEach(d => {
+  // Present first, then the ones that have left. Both are devices on this
+  // network, and an admin needs to see the whole list.
+  const ordered = devices.slice().sort((a, b) =>
+    (a.active === false ? 1 : 0) - (b.active === false ? 1 : 0));
+
+  ordered.forEach(d => {
     const nameLine = el("div", { class: "device-name" }, d.display_name || "Unknown device");
     if (d.group) nameLine.appendChild(el("span", { class: "chip", style: "margin-left:6px;" }, d.group));
-    const row = el("div", { class: "device-row" },
+    if (d.active === false) {
+      nameLine.appendChild(el("span", { class: "offline-tag" }, "offline"));
+    }
+    const row = el("div", { class: d.active === false ? "device-row offline" : "device-row" },
       el("div", {},
         nameLine,
         el("div", { class: "device-meta" }, d.mac || "")
