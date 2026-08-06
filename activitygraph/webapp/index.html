@@ -1487,7 +1487,16 @@ async function refreshMyDevices() {
     ? devices.length + (devices.length === 1 ? " device" : " devices")
     : "none yet";
 
-  if (!here.claimed_by_you) {
+  // An admin sees everything already, so there is nothing to claim, and
+  // claiming would take a device away from whoever it belongs to. Any
+  // claims made before that rule existed are still listed below, so they
+  // can be handed back.
+  if (data.can_claim === false) {
+    note.textContent = devices.length ? devices.length + " to release" : "admin";
+    container.appendChild(el("div", { class: "empty-state" },
+      "You see every device on the network. Claiming is for personal accounts, "
+      + "which start empty and build up a group."));
+  } else if (!here.claimed_by_you) {
     // The rule the model rests on: a device can only be added from itself,
     // so this button is the only way in and it has to be explained.
     const row = el("div", { class: "claimed-device" });

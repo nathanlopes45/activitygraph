@@ -648,6 +648,13 @@ else's MAC address.
 A device belongs to one person at a time. Shared devices such as a TV are
 usually left unclaimed, which leaves them visible to the admin only.
 
+The admin cannot claim anything, deliberately. It already sees every
+device, so a claim would add nothing to its view, and because a device
+belongs to one group at a time it would take that device away from the
+person it belongs to, who would then have no way to claim it. Seeing
+everything and owning nothing is the whole role. Use a personal account
+as well if you want your own devices grouped.
+
 The command above gives the account database an explicit path so the service
 in step 9 uses the same one. Left bare, `--accounts` defaults to
 `~/.activitygraph/`, which resolves to root's home under `sudo`, and you
