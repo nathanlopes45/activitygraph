@@ -185,6 +185,9 @@ def create_app(pipeline, live: bool = False, history_store=None, capture=None,
                 "claimed_by_you": here_mac in claimed if here_mac else False,
                 "recognised": here is not None,
             },
+            # So the page can leave the button out rather than offering an
+            # action the server will refuse.
+            "can_claim": not user.is_admin,
         }
 
     @app.post("/api/claim")
@@ -193,6 +196,19 @@ def create_app(pipeline, live: bool = False, history_store=None, capture=None,
         user = current_user(request)
         if user is None:
             return JSONResponse({"error": "Not signed in."}, status_code=401)
+
+        if user.is_admin:
+            # Nothing to gain and something to lose. An admin already sees
+            # every device, so a claim adds nothing to their view, and a
+            # device belongs to one group at a time -- so claiming one would
+            # take it away from the person whose device it actually is, and
+            # they would have no way to get it back.
+            return JSONResponse(
+                {"error": "The admin account already sees every device, and claiming one "
+                          "would stop its owner from claiming it. Sign in with a personal "
+                          "account to build a group."},
+                status_code=403,
+            )
 
         device = requesting_device(request)
         if device is None or not device.mac:

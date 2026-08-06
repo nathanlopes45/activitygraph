@@ -351,3 +351,90 @@ def test_an_unknown_filter_value_yields_nothing_rather_than_everything(env):
         FakeRequest(token=issue_token(admin.id, SECRET)), devices="00:00:00:00:00:00"))
     assert data["devices"] == []
     assert data["flows"] == []
+
+
+# ---------------- the admin does not claim ----------------
+
+# An admin already sees every device, so a claim adds nothing to their view.
+# It would also take the device away from whoever it belongs to, since a
+# device belongs to one group at a time, and they would have no way to get
+# it back. Seeing everything and owning nothing is the whole role.
+
+def test_the_admin_cannot_claim_a_device(env):
+    pipeline, accounts, routes = env
+    admin = accounts.authenticate("theadmin", "password123")
+    device = pipeline.devices.all_devices()[0]
+
+    result = routes["/api/claim"](
+        FakeRequest(ip=device.ip, token=issue_token(admin.id, SECRET)))
+    assert status(result) == 403
+    assert accounts.macs_for_user(admin.id) == set()
+
+
+def test_the_refusal_explains_what_to_do_instead(env):
+    """A bare "forbidden" would read as a bug on the one account that can
+    see everything."""
+    pipeline, accounts, routes = env
+    admin = accounts.authenticate("theadmin", "password123")
+    device = pipeline.devices.all_devices()[0]
+
+    message = body(routes["/api/claim"](
+        FakeRequest(ip=device.ip, token=issue_token(admin.id, SECRET))))["error"]
+    assert "personal account" in message
+
+
+def test_refusing_the_admin_leaves_the_device_claimable_by_its_owner(env):
+    """The point of the rule: the device must still be available."""
+    pipeline, accounts, routes = env
+    admin = accounts.authenticate("theadmin", "password123")
+    alice = accounts.create_user("alice", "password123")
+    device = pipeline.devices.all_devices()[0]
+
+    routes["/api/claim"](FakeRequest(ip=device.ip, token=issue_token(admin.id, SECRET)))
+    result = routes["/api/claim"](FakeRequest(ip=device.ip, token=issue_token(alice.id, SECRET)))
+
+    assert status(result) == 200
+    assert accounts.macs_for_user(alice.id) == {device.mac.upper()}
+
+
+def test_the_admin_still_sees_every_device_and_its_traffic(env):
+    """Refusing the claim must not narrow what the admin can see."""
+    pipeline, accounts, routes = env
+    admin = accounts.authenticate("theadmin", "password123")
+
+    data = body(routes["/api/summary"](FakeRequest(token=issue_token(admin.id, SECRET))))
+    assert len(data["devices"]) == len(pipeline.devices.all_devices())
+    assert data["flows"], "the admin should still see traffic"
+    assert data["viewer"]["sees_all_devices"] is True
+
+
+def test_the_admin_is_told_not_to_offer_the_claim_button(env):
+    pipeline, accounts, routes = env
+    admin = accounts.authenticate("theadmin", "password123")
+    device = pipeline.devices.all_devices()[0]
+
+    data = body(routes["/api/me"](FakeRequest(ip=device.ip, token=issue_token(admin.id, SECRET))))
+    assert data["can_claim"] is False
+
+
+def test_a_normal_account_is_still_offered_the_button(env):
+    pipeline, accounts, routes = env
+    alice = accounts.create_user("alice", "password123")
+    device = pipeline.devices.all_devices()[0]
+
+    data = body(routes["/api/me"](FakeRequest(ip=device.ip, token=issue_token(alice.id, SECRET))))
+    assert data["can_claim"] is True
+
+
+def test_the_admin_can_still_release_a_claim_made_earlier(env):
+    """Claims made before this rule existed would otherwise be stuck on the
+    one account that cannot claim, and so cannot undo it either."""
+    pipeline, accounts, routes = env
+    admin = accounts.authenticate("theadmin", "password123")
+    device = pipeline.devices.all_devices()[0]
+    accounts.claim_device(admin.id, device.mac)  # as if from before the rule
+
+    result = routes["/api/unclaim"](
+        FakeRequest(token=issue_token(admin.id, SECRET)), {"mac": device.mac})
+    assert status(result) == 200
+    assert accounts.macs_for_user(admin.id) == set()
