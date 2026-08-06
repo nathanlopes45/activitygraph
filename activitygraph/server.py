@@ -260,6 +260,61 @@ def create_app(pipeline, live: bool = False, history_store=None, capture=None,
             return JSONResponse({"error": "That device is not in your group."}, status_code=404)
         return {"released": mac.upper()}
 
+    @app.get("/api/blacklist")
+    def get_blacklist(request: Request):
+        """A person's own list; for an admin, every group's."""
+        user = current_user(request)
+        if user is None:
+            return JSONResponse({"error": "Not signed in."}, status_code=401)
+        if user.is_admin:
+            return {"is_admin": True, "groups": accounts.blocked_by_group()}
+        return {"is_admin": False, "group": user.group_name,
+                "patterns": accounts.blocked_for(user.id)}
+
+    def _blacklist_target(user, payload):
+        """Whose list is being edited, or None if the caller may not.
+
+        A person edits their own. An admin may edit anyone's, by naming the
+        user, which is what makes the admin view usable rather than
+        read-only. Anyone else naming another user is refused rather than
+        silently redirected to their own list.
+        """
+        requested = payload.get("user_id")
+        if requested in (None, "", user.id):
+            return user.id
+        if not user.is_admin:
+            return None
+        return int(requested)
+
+    @app.post("/api/blacklist")
+    def add_blacklist(request: Request, payload: dict = Body(...)):
+        user = current_user(request)
+        if user is None:
+            return JSONResponse({"error": "Not signed in."}, status_code=401)
+        target = _blacklist_target(user, payload)
+        if target is None:
+            return JSONResponse({"error": "You can only change your own list."},
+                                status_code=403)
+        try:
+            stored = accounts.add_blocked(target, payload.get("pattern", ""))
+        except AccountError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return {"added": stored, "patterns": accounts.blocked_for(target)}
+
+    @app.delete("/api/blacklist")
+    def remove_blacklist(request: Request, payload: dict = Body(...)):
+        user = current_user(request)
+        if user is None:
+            return JSONResponse({"error": "Not signed in."}, status_code=401)
+        target = _blacklist_target(user, payload)
+        if target is None:
+            return JSONResponse({"error": "You can only change your own list."},
+                                status_code=403)
+        if not accounts.remove_blocked(target, payload.get("pattern", "")):
+            return JSONResponse({"error": "That entry is not on the list."},
+                                status_code=404)
+        return {"patterns": accounts.blocked_for(target)}
+
     @app.get("/")
     def index():
         return FileResponse(WEBAPP_DIR / "index.html")
