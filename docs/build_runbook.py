@@ -781,13 +781,11 @@ p("A daily limit blocks only a service's front door. Over HTTPS the hostname "
 
 p("Blocking a domain covers its subdomains but not its siblings: blocking "
   "tiktok.com does not block tiktokcdn.com, which is a separate domain. Add "
-  "it as well if you want the app fully unreachable. This matters most for "
-  "phone apps: the YouTube app streams from googlevideo.com, which a daily "
-  "limit deliberately leaves alone so videos embedded in other pages keep "
-  "working, so block it alongside youtube.com if you want the app itself "
-  "unreachable rather than just the website. A device with a cached "
+  "it as well if you want the app fully unreachable. A device with a cached "
   "DNS answer can also reach the address until that cache expires, so a block "
   "is firm within about a minute rather than instantly.")
+
+p("A blacklist entry covers the whole service, not only the domain typed. Blocking youtube.com also covers googlevideo.com, ytimg.com and the app's own API, because a phone app does not visit a website: the YouTube app streams from googlevideo.com and never touches youtube.com at all. A daily limit deliberately does not do this, blocking the front door and leaving the rest reachable so an embedded video still plays. The two differ because the intent differs: a blacklist says none of this, a limit says enough of this.")
 
 h3("9.1  Create the admin account first")
 callout("Whoever registers first becomes the admin",

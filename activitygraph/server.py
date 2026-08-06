@@ -729,9 +729,10 @@ class BackgroundCapture:
             used = (self.history_store.service_seconds_today(group["device_macs"])
                     if self.history_store is not None else {})
             spent = exhausted_services(limits.get(group["user_id"], {}), used)
-            for pattern in quota_patterns(spent):
-                if pattern not in group["patterns"]:
-                    group["patterns"].append(pattern)
+            # Kept separate from the blacklist: a limit blocks only a front
+            # door so embeds keep working, while a blacklist covers the whole
+            # service. Merging them here would apply the wider rule to both.
+            group["quota_patterns"] = quota_patterns(spent)
 
         script = render_ruleset(groups, addresses,
                                 self.pipeline.services._dns_cache)

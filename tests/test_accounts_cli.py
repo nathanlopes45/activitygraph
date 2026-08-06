@@ -204,3 +204,11 @@ def test_the_panel_says_when_nothing_is_being_blocked(page):
     list: it reads as protection that is not there."""
     assert "blocked.enforcing === false" in page
     assert "--enforce-blacklist" in page
+
+
+def test_the_admin_panel_draws_the_blacklists_it_fetches(page):
+    """A group's blocked sites were fetched and then never rendered, so the
+    one account meant to oversee them could not see them."""
+    admin_branch = page.split("if (quotas.is_admin) {")[1].split("return;")[0]
+    assert "blocked.groups" in admin_branch
+    assert "blockedByUser" in admin_branch
