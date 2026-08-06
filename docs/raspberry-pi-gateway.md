@@ -591,12 +591,16 @@ sudo .venv/bin/python -m activitygraph.main \
 ```
 
 - `-i eth1` is the LAN side. **Not `eth0`.** See the warning at the top.
-- `--exclude-self` keeps the Pi out of the device list. It forwards
-  everyone's traffic but is nobody's device, and it otherwise appears
-  more than once: under its LAN address, and again under its upstream
-  address, which it answers on whenever you open the dashboard by that
-  address from the LAN side. Leave this off on a laptop capturing its
-  own traffic, where that machine is the only thing there is to see.
+- `--enforce-blacklist` is what makes blocking and daily limits actually
+  drop packets. **Without it the lists are recorded and nothing is
+  blocked**, which looks exactly like the feature being broken. See the
+  section below before turning it on. The dashboard says plainly when it
+  is missing.
+- The Pi keeps itself out of the device list automatically. Capturing an
+  interface that does not carry the default route is what makes a machine
+  a gateway rather than a laptop watching its own traffic, so no flag is
+  needed; it forwards everyone's traffic but is nobody's device. Pass
+  `--include-self` if you want it listed.
 - `--capture-mode light` is close to mandatory on a Pi. Every packet the
   capture filter admits is copied into Python and taken apart by scapy,
   which costs far more per packet than the kernel spends forwarding it. On
@@ -678,7 +682,13 @@ Three things are worth knowing before you turn enforcement on:
 
 Blocking a domain covers its subdomains but not its siblings: blocking
 `tiktok.com` does not block `tiktokcdn.com`, which is a separate domain.
-Add it as well if you want the app fully unreachable. A device with a
+Add it as well if you want the app fully unreachable.
+
+This matters most for **phone apps**. The YouTube app streams from
+`googlevideo.com`, which a daily limit deliberately leaves alone so that
+videos embedded in other pages keep working. A blacklist entry has no
+such restriction, so block `googlevideo.com` alongside `youtube.com` if
+you want the app itself unreachable rather than just the website. A device with a
 cached DNS answer can also reach the address until that cache expires, so
 a block is firm within about a minute rather than instantly.
 
@@ -747,7 +757,7 @@ Wants=network-online.target
 Type=simple
 User=root
 WorkingDirectory=$AG
-ExecStart=$AG/.venv/bin/python -m activitygraph.main --serve --serve-source live -i eth1 --host 0.0.0.0 --no-browser --capture-mode light --exclude-self --active-within 15 --accounts $AG/accounts.db --dhcp-leases --history-db $AG/history.db
+ExecStart=$AG/.venv/bin/python -m activitygraph.main --serve --serve-source live -i eth1 --host 0.0.0.0 --no-browser --capture-mode light --active-within 15 --enforce-blacklist --accounts $AG/accounts.db --dhcp-leases --history-db $AG/history.db
 Restart=always
 RestartSec=10
 
@@ -785,7 +795,7 @@ User=root
 WorkingDirectory=/opt/activitygraph
 ExecStart=/opt/activitygraph/.venv/bin/python -m activitygraph.main \
   --serve --serve-source live -i eth1 --host 0.0.0.0 --no-browser \
-  --capture-mode light --exclude-self --active-within 15 \n  --accounts /opt/activitygraph/accounts.db \
+  --capture-mode light --active-within 15 --enforce-blacklist \n  --accounts /opt/activitygraph/accounts.db \
   --dhcp-leases --history-db /opt/activitygraph/history.db
 Restart=always
 RestartSec=10
