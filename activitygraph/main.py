@@ -110,8 +110,6 @@ class Pipeline:
         # So flows are cut and devices are merely marked.
         active_cutoff = (datetime.now(timezone.utc) - timedelta(seconds=active_within_seconds)
                          if active_within_seconds else None)
-        if active_cutoff is not None:
-            flows = [f for f in flows if f.end_time >= active_cutoff]
 
         # Restricting the *inputs* rather than filtering the finished payload
         # is what makes per-user scoping safe. Every figure below is derived
@@ -126,22 +124,29 @@ class Pipeline:
             flows = [f for f in flows
                      if f.src_ip in visible_ips or f.dst_ip in visible_ips]
 
+        # The window applies to what is *happening*, never to what has
+        # happened. Sessions and the graph answer "what is going on now", so
+        # they are cut to it; the time totals and the rankings answer "where
+        # did today go", and cutting those to the last few minutes reported
+        # an hour of YouTube as zero the moment the viewer stopped watching.
+        current = ([f for f in flows if f.end_time >= active_cutoff]
+                   if active_cutoff is not None else flows)
+
         # Everything derived below describes chosen activity, so the plumbing
         # comes out first: DNS, DHCP, clock sync, update checks, ad beacons.
         # The raw flows keep all of it, and the totals for what was set aside
         # are reported, so nothing disappears without saying so.
-        if include_background:
-            activity, background = flows, []
-        else:
-            activity = [f for f in flows if f.category not in BACKGROUND_CATEGORIES]
-            background = [f for f in flows if f.category in BACKGROUND_CATEGORIES]
+        def without_plumbing(subset):
+            if include_background:
+                return subset
+            return [f for f in subset if f.category not in BACKGROUND_CATEGORIES]
 
         # The viewer's own narrowing, applied second so it can only ever
         # subtract from what the permission check already allowed. Drawn from
         # `activity`, so the filter never offers a service the panels below
         # will not show: DNS as a chip that empties the dashboard is worse
         # than no chip at all.
-        available_services = sorted({f.service for f in activity if f.service})
+        available_services = sorted({f.service for f in without_plumbing(flows) if f.service})
         available_devices = [
             {"mac": (d.mac or "").upper(), "name": d.display_name(), "ip": d.ip}
             for d in devices
@@ -153,19 +158,26 @@ class Pipeline:
             chosen_ips = _all_addresses(devices)
             keep = lambda f: f.src_ip in chosen_ips or f.dst_ip in chosen_ips
             flows = [f for f in flows if keep(f)]
-            activity = [f for f in activity if keep(f)]
-            background = [f for f in background if keep(f)]
+            current = [f for f in current if keep(f)]
 
         if only_services:
             wanted = set(only_services)
             flows = [f for f in flows if f.service in wanted]
-            activity = [f for f in activity if f.service in wanted]
+            current = [f for f in current if f.service in wanted]
             # Devices with nothing left to show would otherwise sit in the
             # list at zero, which reads as "used it for no time" rather than
             # "did not use it".
-            active_ips = {f.src_ip for f in activity} | {f.dst_ip for f in activity}
+            active_ips = {f.src_ip for f in flows} | {f.dst_ip for f in flows}
             devices = [d for d in devices
                        if any(a in active_ips for a in (d.addresses or [d.ip]))]
+
+        # Derived only now, so every filter above has already been applied.
+        # Computing them earlier meant a filter narrowed the raw flow list
+        # and left every figure beside it describing the unfiltered set.
+        activity = without_plumbing(flows)
+        current_activity = without_plumbing(current)
+        background = [] if include_background else [
+            f for f in flows if f.category in BACKGROUND_CATEGORIES]
 
         by_category: dict[str, dict] = {}
         for f in activity:
@@ -216,7 +228,7 @@ class Pipeline:
             ],
             "flows": [f.to_dict() for f in flows],
             "sessions": [s.to_dict() for s in
-                         group_into_sessions(activity, local_ips,
+                         group_into_sessions(current_activity, local_ips,
                                             session_gap_seconds=self.session_gap_seconds)],
             "category_breakdown": by_category,
             "ranked_devices": rank_devices(activity, devices),

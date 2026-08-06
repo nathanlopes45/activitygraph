@@ -613,13 +613,13 @@ sudo .venv/bin/python -m activitygraph.main \
   learns names only: a lease records an address handed out and outlives the
   connection by hours, so a device appears once it sends traffic, wearing
   the name the lease taught.
-- `--active-within 15` limits the graph, sessions and services to the last
-  fifteen minutes. A gateway runs for weeks, and without it the dashboard
-  fills up with everything ever seen. Devices are not removed by it: a
-  phone that has gone home stays in the Devices panel marked offline,
-  because it is still a device on this network and the admin needs to see
-  the whole list. What it did earlier is in the History panel.
-  `--history-db` keeps the long-term record either way.
+- `--active-within 15` limits the **sessions and the graph** to the last
+  fifteen minutes, so a gateway that has run for weeks does not show an
+  hour-old session as though it were live. It deliberately does not touch
+  the time totals, the service rankings or the device list: those answer
+  "where did today go", and cutting them to the window reported an hour
+  of YouTube as zero the moment you stopped watching. A phone that has
+  gone home stays listed, marked offline, with its time still counted.
 - `--show-background` puts DNS, DHCP, clock sync, update checks and ad
   beacons back into the headline panels. They are left out by default
   because none of it is something a person did, and DNS in particular
@@ -645,7 +645,44 @@ you would rather do it centrally.
 
 Open `http://192.168.50.1:8420` from any device on the network.
 
-#### Sign in and claim your devices
+#### Blocking and daily limits
+
+Each group can block sites outright, and can give itself a daily
+allowance for a service. Both are managed from the dashboard's **Daily
+Limits & Blocked Sites** panel; a person manages their own, and the admin
+sees and can edit every group's.
+
+Neither does anything to the network until you add `--enforce-blacklist`,
+which is refused without `--accounts` because a block needs a group to
+apply to. With it, traffic from that group's devices to those
+destinations is dropped, and nobody else on the network is affected.
+
+Three things are worth knowing before you turn enforcement on:
+
+- Rules live in an nftables table of their own, called `activitygraph`.
+  The `filter` and `nat` tables from step 6 are never touched, and the
+  whole table is replaced in one atomic operation, so there is no moment
+  where half a ruleset is live. If anything fails, the table is removed
+  rather than left partly applied: it fails open by design.
+- Only forwarded traffic is dropped. Packets to the Pi itself are never
+  matched, so a group blocking half the internet keeps the dashboard, DNS
+  and SSH, and with them the means to undo it.
+- A daily limit blocks only a service's front door. Over HTTPS the
+  hostname is visible but the path is not, so `youtube.com/watch` and
+  `youtube.com/embed` cannot be told apart; what can be told apart is
+  which hosts each uses. An hour spent on YouTube blocks `youtube.com`
+  and leaves `googlevideo.com` and `youtube-nocookie.com` reachable, so a
+  video embedded in an article still plays and a map on a shop's contact
+  page still loads. A service with no known front door is marked **not
+  blockable** in the panel rather than appearing to work.
+
+Blocking a domain covers its subdomains but not its siblings: blocking
+`tiktok.com` does not block `tiktokcdn.com`, which is a separate domain.
+Add it as well if you want the app fully unreachable. A device with a
+cached DNS answer can also reach the address until that cache expires, so
+a block is firm within about a minute rather than instantly.
+
+### Sign in and claim your devices
 
 The first account created becomes the admin and can see every device on the
 network. **Create it yourself, now, before anyone else opens the

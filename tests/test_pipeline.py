@@ -344,12 +344,19 @@ def test_a_departed_device_is_marked_rather_than_removed():
     assert by_ip == {"192.168.50.10": False, "192.168.50.11": True}
 
 
-def test_a_departed_device_contributes_no_current_activity():
-    """The half the window is actually for: what it did an hour ago belongs
-    in the history, not in a picture of what is happening."""
+def test_a_departed_device_runs_no_current_session():
+    """The half the window is actually for: what it did earlier should not
+    appear as something happening now."""
     data = _two_devices_one_long_gone().summary(active_within_seconds=15 * 60)
-    assert all(f["src_ip"] == "192.168.50.11" for f in data["flows"])
     assert all(s["device_ip"] == "192.168.50.11" for s in data["sessions"])
+
+
+def test_what_a_departed_device_did_is_still_counted():
+    """Its time belongs in today's totals and in the raw flow list. Cutting
+    those to the window is what understated every figure on the page."""
+    data = _two_devices_one_long_gone().summary(active_within_seconds=15 * 60)
+    assert any(f["src_ip"] == "192.168.50.10" for f in data["flows"]), \
+        "Stats for Nerds must stay complete"
 
 
 def test_everything_is_active_when_no_window_is_set():
@@ -366,3 +373,59 @@ def test_without_a_window_nothing_is_hidden():
 
     pipeline = run_demo(idle_timeout=5.0)
     assert len(pipeline.summary(active_within_seconds=None)["devices"]) == 3
+
+
+# ---------------- the window must not shorten the day ----------------
+
+def _an_hour_of_youtube_ending_twenty_minutes_ago():
+    from datetime import datetime, timedelta, timezone
+
+    from activitygraph.main import Pipeline
+    from activitygraph.models import Packet
+
+    now = datetime.now(timezone.utc)
+    pipeline = Pipeline(idle_timeout_seconds=1.0)
+    for offset in range(0, 70, 5):
+        pipeline.ingest(Packet(
+            timestamp=now - timedelta(minutes=90) + timedelta(minutes=offset),
+            src_ip="192.168.50.50", dst_ip="142.250.66.238", proto="TCP",
+            length=50000, src_port=5000, dst_port=443,
+            src_mac="AA:00:00:00:00:01", tls_sni="www.youtube.com"))
+    pipeline.finalize()
+    return pipeline
+
+
+def test_a_freshness_window_does_not_shorten_the_time_totals():
+    """The reported understatement. --active-within was cutting flows before
+    the time was computed, so an hour of YouTube read as zero the moment the
+    viewer stopped watching. The window answers "what is happening now"; the
+    totals answer "where did today go"."""
+    pipeline = _an_hour_of_youtube_ending_twenty_minutes_ago()
+    windowed = pipeline.summary(active_within_seconds=15 * 60)
+    assert windowed["time_totals"]["total_active_seconds"] == \
+        pipeline.summary()["time_totals"]["total_active_seconds"]
+    assert windowed["time_totals"]["total_active_seconds"] > 3600
+
+
+def test_a_window_does_not_hide_a_service_used_earlier_today():
+    pipeline = _an_hour_of_youtube_ending_twenty_minutes_ago()
+    services = [s["service"] for s in
+                pipeline.summary(active_within_seconds=15 * 60)["ranked_services"]]
+    assert services == ["YouTube"]
+
+
+def test_the_window_still_clears_finished_sessions():
+    """The half the window is for: nothing is happening now, and the graph
+    should say so rather than showing an hour-old session as live."""
+    pipeline = _an_hour_of_youtube_ending_twenty_minutes_ago()
+    assert pipeline.summary(active_within_seconds=15 * 60)["sessions"] == []
+    assert pipeline.summary()["sessions"], "without a window it is still there"
+
+
+def test_filters_still_narrow_the_time_totals():
+    """The lists are derived after every filter, so a filter must still
+    change the figures beside it rather than leaving them unfiltered."""
+    pipeline = _an_hour_of_youtube_ending_twenty_minutes_ago()
+    everything = pipeline.summary()["time_totals"]["total_active_seconds"]
+    filtered = pipeline.summary(only_services=["Netflix"])["time_totals"]["total_active_seconds"]
+    assert everything > 0 and filtered == 0
