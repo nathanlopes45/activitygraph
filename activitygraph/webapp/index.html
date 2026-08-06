@@ -1629,13 +1629,20 @@ function renderThisDevice(data, here) {
     note.textContent = "not yours yet";
     const claim = el("button", { class: "btn", type: "button" }, "Claim this device");
     claim.addEventListener("click", async () => {
-      const { ok, data: result } = await postJSON("/api/claim");
+      // Asked for rather than guessed. What a device broadcasts about itself
+      // varies by make, by OS version and by whether it is awake; its owner
+      // always knows what it is.
+      const suggested = here.name && here.name !== here.ip ? here.name : "";
+      const name = prompt("What do you call this device?", suggested);
+      if (name === null) return;
+      const { ok, data: result } = await postJSON("/api/claim", { name });
       if (!ok) { alert(result.error || "Could not claim this device."); return; }
       refreshMyDevices();
       refresh();
     });
     const row = el("div", { class: "claimed-device" });
-    row.appendChild(el("div", {}, "Add it to your group so its activity is yours."));
+    row.appendChild(el("div", {},
+      "Name it and add it to your group. Everyone will see it as yours."));
     row.appendChild(claim);
     container.appendChild(row);
   }

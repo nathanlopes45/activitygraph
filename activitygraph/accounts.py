@@ -202,6 +202,11 @@ class AccountStore:
             CREATE TABLE IF NOT EXISTS claimed_devices (
                 device_mac TEXT PRIMARY KEY,
                 user_id INTEGER NOT NULL,
+                -- What its owner calls it. A person naming their own phone
+                -- is the only reliable source there is: what a device
+                -- broadcasts about itself varies by make, by OS version and
+                -- by whether it happens to be awake.
+                label TEXT,
                 claimed_at TEXT NOT NULL,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             );
@@ -233,14 +238,14 @@ class AccountStore:
             cur = self._conn.execute(
                 """INSERT INTO users (username, password_hash, group_name, is_admin, created_at)
                    VALUES (?, ?, ?, ?, ?)""",
-                (username, hash_password(password), (group_name or username).strip(),
+                (username, hash_password(password), (group_name or f"{username}'s group").strip(),
                  1 if is_admin else 0, datetime.now(timezone.utc).isoformat()),
             )
         except sqlite3.IntegrityError:
             raise AccountError("That username is already taken.") from None
         self._conn.commit()
         return User(id=cur.lastrowid, username=username,
-                    group_name=(group_name or username).strip(), is_admin=is_admin)
+                    group_name=(group_name or f"{username}'s group").strip(), is_admin=is_admin)
 
     def authenticate(self, username: str, password: str) -> Optional[User]:
         """Return the user on correct credentials, else None.
@@ -278,22 +283,37 @@ class AccountStore:
         self._conn.commit()
 
     # -- claimed devices ---------------------------------------------------
-    def claim_device(self, user_id: int, mac: str) -> None:
-        """Attach a device to this user, taking it from whoever held it.
+    def claim_device(self, user_id: int, mac: str, label: Optional[str] = None) -> None:
+        """Attach a device to this user under a name they chose.
 
         Re-claiming is allowed because the claim can only be made from the
         device itself, so whoever is holding it is the person entitled to say
-        where it belongs.
+        where it belongs, and what it is called.
         """
         self._conn.execute(
-            """INSERT INTO claimed_devices (device_mac, user_id, claimed_at)
-               VALUES (?, ?, ?)
+            """INSERT INTO claimed_devices (device_mac, user_id, label, claimed_at)
+               VALUES (?, ?, ?, ?)
                ON CONFLICT(device_mac) DO UPDATE SET
                  user_id = excluded.user_id,
+                 label = excluded.label,
                  claimed_at = excluded.claimed_at""",
-            (mac.upper(), user_id, datetime.now(timezone.utc).isoformat()),
+            (mac.upper(), user_id, (label or "").strip() or None,
+             datetime.now(timezone.utc).isoformat()),
         )
         self._conn.commit()
+
+    def device_labels(self) -> dict:
+        """Every claimed device's MAC mapped to "<owner>'s <name>".
+
+        Fed to the device registry as aliases, which already outrank every
+        protocol guess, so one mechanism covers the whole dashboard rather
+        than each panel needing to know about ownership.
+        """
+        rows = self._conn.execute(
+            """SELECT c.device_mac, c.label, u.username
+                 FROM claimed_devices c JOIN users u ON u.id = c.user_id
+                WHERE c.label IS NOT NULL AND c.label != ''""")
+        return {mac: f"{username}'s {label}" for mac, label, username in rows}
 
     def release_device(self, user_id: int, mac: str) -> bool:
         cur = self._conn.execute(

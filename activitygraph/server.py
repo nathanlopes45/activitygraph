@@ -192,8 +192,15 @@ def create_app(pipeline, live: bool = False, history_store=None, capture=None,
             "can_claim": not user.is_admin,
         }
 
+    def _apply_device_labels():
+        """Push claimed-device names into the registry as aliases."""
+        if accounts is not None:
+            pipeline.devices.set_aliases(accounts.device_labels())
+
+    _apply_device_labels()
+
     @app.post("/api/claim")
-    def claim(request: Request):
+    def claim(request: Request, payload: dict = Body(default={})):
         """Claim the device this request came from, and only that device."""
         user = current_user(request)
         if user is None:
@@ -220,7 +227,20 @@ def create_app(pipeline, live: bool = False, history_store=None, capture=None,
                 status_code=404,
             )
 
-        accounts.claim_device(user.id, device.mac)
+        label = (payload.get("name") or "").strip()
+        if not label:
+            return JSONResponse(
+                {"error": "Give this device a name, so it is recognisable to you "
+                          "and to whoever administers the network."},
+                status_code=400,
+            )
+        if len(label) > 40:
+            label = label[:40]
+
+        accounts.claim_device(user.id, device.mac, label)
+        # Applied immediately: the name a person typed should be on the
+        # dashboard by the time the page reloads, not on the next restart.
+        _apply_device_labels()
         return {"claimed": {"mac": device.mac.upper(), "name": device.display_name(),
                             "ip": device.ip}}
 
@@ -232,7 +252,9 @@ def create_app(pipeline, live: bool = False, history_store=None, capture=None,
         mac = (payload.get("mac") or "").strip()
         if not mac:
             return JSONResponse({"error": "No device given."}, status_code=400)
-        if not accounts.release_device(user.id, mac):
+        released = accounts.release_device(user.id, mac)
+        _apply_device_labels()
+        if not released:
             # Covers both "not yours" and "not claimed", without revealing
             # which, so this cannot be used to probe other people's devices.
             return JSONResponse({"error": "That device is not in your group."}, status_code=404)

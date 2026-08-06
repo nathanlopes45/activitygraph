@@ -215,6 +215,22 @@ class DeviceRegistry:
         # it puts infrastructure in among the household.
         self._excluded_macs = {_normalize_mac(m) for m in (exclude_macs or set())}
 
+    def set_aliases(self, aliases: dict) -> None:
+        """Replace the user-supplied names, applying them at once.
+
+        Used for names people gave their own devices when claiming them. An
+        alias outranks every protocol guess, so routing them through this one
+        mechanism means the whole dashboard picks them up rather than each
+        panel needing to know about ownership.
+        """
+        self._aliases = {_normalize_mac(mac): name for mac, name in (aliases or {}).items()}
+        for device in self._devices.values():
+            key = _normalize_mac(device.mac or "")
+            name = self._aliases.get(key)
+            if name:
+                device.hostname = name
+                self._best_name[key] = (name, _ALIAS_QUALITY)
+
     def observe(self, packet: Packet) -> None:
         now = packet.timestamp
 

@@ -148,7 +148,8 @@ def test_claim_attaches_the_requesting_device(env):
     alice = accounts.create_user("alice", "password123")
     device = pipeline.devices.all_devices()[0]
 
-    result = routes["/api/claim"](FakeRequest(ip=device.ip, token=issue_token(alice.id, SECRET)))
+    result = routes["/api/claim"](FakeRequest(ip=device.ip, token=issue_token(alice.id, SECRET)),
+                                  {"name": "iPhone"})
     assert body(result)["claimed"]["mac"] == device.mac.upper()
     assert accounts.macs_for_user(alice.id) == {device.mac.upper()}
 
@@ -157,14 +158,15 @@ def test_claim_from_an_unknown_address_is_refused(env):
     """You cannot claim a device the gateway has never seen."""
     _, accounts, routes = env
     alice = accounts.create_user("alice", "password123")
-    result = routes["/api/claim"](FakeRequest(ip="203.0.113.99", token=issue_token(alice.id, SECRET)))
+    result = routes["/api/claim"](FakeRequest(ip="203.0.113.99", token=issue_token(alice.id, SECRET)),
+                                  {"name": "iPhone"})
     assert status(result) == 404
 
 
 def test_claim_requires_sign_in(env):
     pipeline, _, routes = env
     device = pipeline.devices.all_devices()[0]
-    assert status(routes["/api/claim"](FakeRequest(ip=device.ip))) == 401
+    assert status(routes["/api/claim"](FakeRequest(ip=device.ip), {"name": "iPhone"})) == 401
 
 
 def test_you_can_only_claim_the_device_you_are_using(env):
@@ -175,7 +177,8 @@ def test_you_can_only_claim_the_device_you_are_using(env):
     devices = pipeline.devices.all_devices()
     here, other = devices[0], devices[1]
 
-    routes["/api/claim"](FakeRequest(ip=here.ip, token=issue_token(alice.id, SECRET)))
+    routes["/api/claim"](FakeRequest(ip=here.ip, token=issue_token(alice.id, SECRET)),
+                         {"name": "iPhone"})
 
     claimed = accounts.macs_for_user(alice.id)
     assert claimed == {here.mac.upper()}
@@ -366,7 +369,7 @@ def test_the_admin_cannot_claim_a_device(env):
     device = pipeline.devices.all_devices()[0]
 
     result = routes["/api/claim"](
-        FakeRequest(ip=device.ip, token=issue_token(admin.id, SECRET)))
+        FakeRequest(ip=device.ip, token=issue_token(admin.id, SECRET)), {"name": "x"})
     assert status(result) == 403
     assert accounts.macs_for_user(admin.id) == set()
 
@@ -379,7 +382,7 @@ def test_the_refusal_explains_what_to_do_instead(env):
     device = pipeline.devices.all_devices()[0]
 
     message = body(routes["/api/claim"](
-        FakeRequest(ip=device.ip, token=issue_token(admin.id, SECRET))))["error"]
+        FakeRequest(ip=device.ip, token=issue_token(admin.id, SECRET)), {"name": "x"}))["error"]
     assert "personal account" in message
 
 
@@ -391,7 +394,8 @@ def test_refusing_the_admin_leaves_the_device_claimable_by_its_owner(env):
     device = pipeline.devices.all_devices()[0]
 
     routes["/api/claim"](FakeRequest(ip=device.ip, token=issue_token(admin.id, SECRET)))
-    result = routes["/api/claim"](FakeRequest(ip=device.ip, token=issue_token(alice.id, SECRET)))
+    result = routes["/api/claim"](FakeRequest(ip=device.ip, token=issue_token(alice.id, SECRET)),
+                                  {"name": "iPhone"})
 
     assert status(result) == 200
     assert accounts.macs_for_user(alice.id) == {device.mac.upper()}
@@ -438,3 +442,79 @@ def test_the_admin_can_still_release_a_claim_made_earlier(env):
         FakeRequest(token=issue_token(admin.id, SECRET)), {"mac": device.mac})
     assert status(result) == 200
     assert accounts.macs_for_user(admin.id) == set()
+
+
+# ---------------- the name its owner gave it ----------------
+
+# What a device broadcasts about itself varies by make, by OS version and by
+# whether it happens to be awake. Its owner always knows what it is, so the
+# name is asked for at claim time rather than guessed at forever.
+
+def test_claiming_requires_a_name(env):
+    pipeline, accounts, routes = env
+    alice = accounts.create_user("alice", "password123")
+    device = pipeline.devices.all_devices()[0]
+
+    result = routes["/api/claim"](
+        FakeRequest(ip=device.ip, token=issue_token(alice.id, SECRET)), {"name": "  "})
+    assert status(result) == 400
+    assert accounts.macs_for_user(alice.id) == set()
+
+
+def test_the_owner_is_part_of_the_name_everyone_sees(env):
+    """Sam calling his phone "iPhone" reads as "Sam's iPhone" to whoever
+    administers the network, which is what makes it identifiable there."""
+    pipeline, accounts, routes = env
+    sam = accounts.create_user("Sam", "password123")
+    device = pipeline.devices.all_devices()[0]
+
+    routes["/api/claim"](FakeRequest(ip=device.ip, token=issue_token(sam.id, SECRET)),
+                         {"name": "iPhone"})
+    assert accounts.device_labels()[device.mac.upper()] == "Sam's iPhone"
+
+
+def test_the_name_reaches_the_dashboard_immediately(env):
+    """Applied as an alias, which outranks every protocol guess, so one
+    mechanism covers every panel rather than each needing to know about
+    ownership."""
+    pipeline, accounts, routes = env
+    sam = accounts.create_user("Sam", "password123")
+    admin = accounts.authenticate("theadmin", "password123")
+    device = pipeline.devices.all_devices()[0]
+
+    routes["/api/claim"](FakeRequest(ip=device.ip, token=issue_token(sam.id, SECRET)),
+                         {"name": "iPhone"})
+
+    data = body(routes["/api/summary"](FakeRequest(token=issue_token(admin.id, SECRET))))
+    names = {d["display_name"] for d in data["devices"]}
+    assert "Sam's iPhone" in names
+
+
+def test_a_group_is_named_after_its_person(env):
+    _, accounts, routes = env
+    sam = accounts.create_user("Sam", "password123")
+    assert sam.group_name == "Sam's group"
+
+
+def test_usernames_cannot_repeat(env):
+    """The whole naming scheme leans on the username being unique: two Sams
+    would produce two indistinguishable "Sam's iPhone"."""
+    from activitygraph.accounts import AccountError
+
+    _, accounts, _ = env
+    accounts.create_user("Sam", "password123")
+    with pytest.raises(AccountError):
+        accounts.create_user("sam", "password123")
+
+
+def test_releasing_a_device_takes_its_name_back(env):
+    """Otherwise it would keep reading as Sam's after he gave it up."""
+    pipeline, accounts, routes = env
+    sam = accounts.create_user("Sam", "password123")
+    device = pipeline.devices.all_devices()[0]
+
+    routes["/api/claim"](FakeRequest(ip=device.ip, token=issue_token(sam.id, SECRET)),
+                         {"name": "iPhone"})
+    routes["/api/unclaim"](FakeRequest(token=issue_token(sam.id, SECRET)),
+                           {"mac": device.mac})
+    assert accounts.device_labels() == {}
