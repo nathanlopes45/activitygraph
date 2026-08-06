@@ -879,8 +879,13 @@ table([
      "The session key moved. It lives beside the path given to --accounts, "
      "so keep that path the same between the manual run and the service."],
     ["A phone shows as a bare model name",
-     "It announced no better name. Devices vary in what they broadcast; add "
-     "an alias with --device-aliases if you want to override it."],
+     "iOS sends a generic \"iPhone\" as its DHCP hostname, so the name its "
+     "owner chose comes from Bonjour instead. That needs mDNS (UDP 5353) "
+     "reaching the Pi, which --capture-mode light allows. Check Settings &gt; "
+     "General &gt; About &gt; Name, or override it with --device-aliases."],
+    ["Time in categories looks too low",
+     "Flows are kept alive by a sampled fraction of packets in light mode. "
+     "If durations still look short, raise --idle-timeout."],
     ["No IPv6 traffic at all",
      "Expected. The LAN is single-stack by design. See Phase 4.1."],
 ], [58 * mm, 107 * mm])

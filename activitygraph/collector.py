@@ -239,16 +239,30 @@ def _mdns_local_name(dns) -> Optional[str]:
             if name:
                 candidates.append(name.decode(errors="ignore").rstrip("."))
 
+    # Host records first, then service instances. Both carry the device
+    # name, but the host record is the canonical one.
+    #
+    #   Nathans-iPhone.local                          host record
+    #   Nathans iPhone._companion-link._tcp.local     service instance
+    #   _companion-link._tcp.local                    the service itself
+    #
+    # The leading label of a service instance is the name its owner chose,
+    # which is exactly what is wanted. Only the third form names no device,
+    # and it is recognisable by that leading underscore. Discarding every
+    # name containing "_tcp" threw the second form away too, which on a
+    # phone is often the only one announced: modern iOS advertises these
+    # constantly while publishing its plain host record rarely.
+    hosts, instances = [], []
     for name in candidates:
         if not name.lower().endswith(".local"):
             continue
-        # "_airplay._tcp.local" and "Sams iPhone._raop._tcp.local" both name
-        # a service. Only "Sams-iPhone.local" names the device itself.
-        if "_tcp" in name.lower() or "_udp" in name.lower():
-            continue
         label = name.split(".")[0]
-        if label and not label.startswith("_") and label.upper() not in _NOT_A_DEVICE_NAME:
-            return label.replace("-", " ").strip()
+        if not label or label.startswith("_") or label.upper() in _NOT_A_DEVICE_NAME:
+            continue
+        (instances if ("_tcp" in name.lower() or "_udp" in name.lower()) else hosts).append(label)
+
+    for label in hosts + instances:
+        return label.replace("-", " ").strip()
     return None
 
 
