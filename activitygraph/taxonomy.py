@@ -39,6 +39,7 @@ DEFAULT_SUBCATEGORIES: dict[str, dict[str, list[str]]] = {
                        "Turnitin", "Overleaf"],
         "Courses": ["Coursera", "Khan Academy", "edX", "Udemy", "Duolingo"],
         "Reference": ["Wikipedia", "Google Scholar", "Quizlet", "Chegg"],
+        "Reading": ["Substack", "Medium"],
     },
     "Entertainment": {
         "Music": ["Spotify", "YouTube Music", "SoundCloud", "Pandora"],
@@ -86,6 +87,18 @@ DEFAULT_SUBCATEGORIES: dict[str, dict[str, list[str]]] = {
     },
     "Web Browsing": {
         "Search": ["Google Search", "Bing", "DuckDuckGo", "Ecosia"],
+    },
+    "News": {
+        "Publications": ["New York Times", "BBC", "The Guardian", "ABC News",
+                         "news.com.au", "Sydney Morning Herald", "Reuters"],
+    },
+    "Travel": {
+        "Planning": ["Booking.com", "Airbnb", "Tripadvisor"],
+        "Getting Around": ["Uber", "Google Maps"],
+    },
+    "Health": {
+        "Fitness": ["Strava", "MyFitnessPal"],
+        "Wellbeing": ["Headspace", "Calm"],
     },
     "Ads and Tracking": {
         "Advertising": ["Google Ads", "AppNexus", "Criteo"],

@@ -203,6 +203,31 @@ DOMAIN_RULES: list[tuple[str, str, str]] = [
     (r"(^|\.)adnxs\.com$", "AppNexus", "Ads and Tracking"),
     (r"(^|\.)criteo\.(com|net)$", "Criteo", "Ads and Tracking"),
 
+    # --- More of the long tail ---
+    # Every one of these would otherwise land in the generic HTTPS bucket,
+    # which is the difference between "you browsed the web for two hours"
+    # and something a person can act on.
+    (r"(^|\.)whatsapp\.net$", "WhatsApp", "Communication"),
+    (r"(^|\.)googleusercontent\.com$", "Google Services", "Infrastructure"),
+    (r"(^|\.)substack\.com$", "Substack", "Study"),
+    (r"(^|\.)medium\.com$", "Medium", "Study"),
+    (r"(^|\.)nytimes\.com$", "New York Times", "News"),
+    (r"(^|\.)bbc\.(co\.uk|com)$", "BBC", "News"),
+    (r"(^|\.)theguardian\.com$", "The Guardian", "News"),
+    (r"(^|\.)abc\.net\.au$", "ABC News", "News"),
+    (r"(^|\.)news\.com\.au$", "news.com.au", "News"),
+    (r"(^|\.)smh\.com\.au$", "Sydney Morning Herald", "News"),
+    (r"(^|\.)reuters\.com$", "Reuters", "News"),
+    (r"(^|\.)booking\.com$", "Booking.com", "Travel"),
+    (r"(^|\.)airbnb\.(com|com\.au)$", "Airbnb", "Travel"),
+    (r"(^|\.)uber\.com$", "Uber", "Travel"),
+    (r"(^|\.)maps\.google\.com$", "Google Maps", "Travel"),
+    (r"(^|\.)tripadvisor\.com$", "Tripadvisor", "Travel"),
+    (r"(^|\.)strava\.com$", "Strava", "Health"),
+    (r"(^|\.)myfitnesspal\.com$", "MyFitnessPal", "Health"),
+    (r"(^|\.)headspace\.com$", "Headspace", "Health"),
+    (r"(^|\.)calm\.com$", "Calm", "Health"),
+
     # --- Search engines ---
     (r"(^|\.)google\.(com|com\.au|co\.uk)$", "Google Search", "Web Browsing"),
     (r"(^|\.)bing\.com$", "Bing", "Web Browsing"),
