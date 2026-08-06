@@ -613,11 +613,18 @@ sudo .venv/bin/python -m activitygraph.main \
   learns names only: a lease records an address handed out and outlives the
   connection by hours, so a device appears once it sends traffic, wearing
   the name the lease taught.
-- `--active-within 15` shows only what has been active in the last fifteen
-  minutes. A gateway runs for weeks, and without it the dashboard fills up
-  with every device, session and service ever seen. This affects the live
-  view only; `--history-db` keeps the long-term record either way, so the
-  History panel and day-over-day totals are unchanged.
+- `--active-within 15` limits the graph, sessions and services to the last
+  fifteen minutes. A gateway runs for weeks, and without it the dashboard
+  fills up with everything ever seen. Devices are not removed by it: a
+  phone that has gone home stays in the Devices panel marked offline,
+  because it is still a device on this network and the admin needs to see
+  the whole list. What it did earlier is in the History panel.
+  `--history-db` keeps the long-term record either way.
+- `--show-background` puts DNS, DHCP, clock sync, update checks and ad
+  beacons back into the headline panels. They are left out by default
+  because none of it is something a person did, and DNS in particular
+  appears on every device. The raw flow list under Stats for Nerds always
+  shows everything either way.
 - `--host 0.0.0.0` is needed to reach the dashboard from another machine. It
   also publishes it to everyone on the LAN, which is why `--accounts` is on
   the line above. Without accounts the dashboard is unauthenticated and

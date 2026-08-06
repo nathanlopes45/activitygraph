@@ -103,10 +103,15 @@ class Pipeline:
         # dashboard accumulates every device and service ever seen, which
         # buries what is happening now under what happened on Tuesday. The
         # long view lives in --history-db, which this does not touch.
-        if active_within_seconds:
-            cutoff = datetime.now(timezone.utc) - timedelta(seconds=active_within_seconds)
-            flows = [f for f in flows if f.end_time >= cutoff]
-            devices = [d for d in devices if d.last_seen >= cutoff]
+        # Only the traffic is windowed, not the device list. A phone that
+        # left the network is still a device on it, and an admin needs to see
+        # that it exists; what it did an hour ago is another matter, and
+        # belongs in the history rather than in a graph of what is happening.
+        # So flows are cut and devices are merely marked.
+        active_cutoff = (datetime.now(timezone.utc) - timedelta(seconds=active_within_seconds)
+                         if active_within_seconds else None)
+        if active_cutoff is not None:
+            flows = [f for f in flows if f.end_time >= active_cutoff]
 
         # Restricting the *inputs* rather than filtering the finished payload
         # is what makes per-user scoping safe. Every figure below is derived
@@ -194,7 +199,15 @@ class Pipeline:
                 "byte_count": sum(f.byte_count for f in background),
                 "included": include_background,
             },
-            "devices": [d.to_dict() for d in devices],
+            # `active` says whether the device is still on the network, so
+            # the page can list a phone that has gone home without pretending
+            # it is doing anything. With no window everything is active,
+            # which is correct for a one-shot run over a fixed capture.
+            "devices": [
+                {**d.to_dict(),
+                 "active": active_cutoff is None or d.last_seen >= active_cutoff}
+                for d in devices
+            ],
             "flows": [f.to_dict() for f in flows],
             "sessions": [s.to_dict() for s in
                          group_into_sessions(activity, local_ips,

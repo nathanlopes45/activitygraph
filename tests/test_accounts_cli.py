@@ -167,3 +167,18 @@ def test_the_folds_use_native_disclosure_rather_than_a_scripted_toggle(page):
     for section in ("filter-bar", "nerd-stats"):
         opening = page.split(f'id="{section}"')[0].rsplit("<", 1)[1]
         assert opening.startswith("details"), f"{section} is not a <details>"
+
+
+def test_the_graph_draws_only_devices_still_on_the_network(page):
+    """A device that has left is still listed in the Devices panel, but
+    drawing it on the graph with nothing attached reads as "idle" when the
+    truth is "gone"."""
+    graph = page.split("function renderGraph(")[1].split("function ")[0]
+    assert "d.active !== false" in graph
+
+
+def test_the_device_list_keeps_departed_devices(page):
+    """The admin needs the whole list. Dimmed and labelled, not removed."""
+    devices = page.split("function renderDevices(")[1].split("\n}")[0]
+    assert "offline" in devices
+    assert ".filter(" not in devices, "the device list must not drop anyone"

@@ -697,10 +697,16 @@ table([
      "handed out and outlives the connection by hours, so a device appears "
      "once it sends traffic, wearing the name the lease taught."],
     ["<font face='Courier'>--active-within 15</font>",
-     "Shows only what has been active in the last fifteen minutes. A gateway "
-     "runs for weeks, and without it the dashboard fills with every device, "
-     "session and service ever seen. Live view only: --history-db keeps the "
-     "long-term record either way."],
+     "Limits the graph, sessions and services to the last fifteen minutes. A "
+     "gateway runs for weeks, and without it the dashboard fills with "
+     "everything ever seen. Devices are not removed by it: a phone that has "
+     "gone home stays in the Devices panel marked offline, since it is still a "
+     "device on this network. What it did earlier is in the History panel."],
+    ["<font face='Courier'>--show-background</font>",
+     "Puts DNS, DHCP, clock sync, update checks and ad beacons back into the "
+     "headline panels. Left out by default because none of it is something a "
+     "person did, and DNS appears on every device. The raw flow list under "
+     "Stats for Nerds always shows everything."],
     ["<font face='Courier'>--host 0.0.0.0</font>",
      "Needed to reach the dashboard from another machine. It also publishes "
      "it to the whole LAN, which is why the flag below is on the same line."],

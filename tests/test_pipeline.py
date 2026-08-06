@@ -310,9 +310,8 @@ def test_summary_group_time_is_union_not_sum():
 
 # ---------------- only what is happening now ----------------
 
-def test_active_within_hides_devices_and_flows_that_have_gone_quiet():
-    """A gateway runs for weeks. Without a window the dashboard accumulates
-    every device and service ever seen, burying what is happening now."""
+def _two_devices_one_long_gone():
+    """One device active now, one last seen six hours ago."""
     from datetime import datetime, timedelta, timezone
 
     from activitygraph.main import Pipeline
@@ -328,13 +327,36 @@ def test_active_within_hides_devices_and_flows_that_have_gone_quiet():
     pipeline.ingest(packet("192.168.50.10", "AA:00:00:00:00:01", now - timedelta(hours=6)))
     pipeline.ingest(packet("192.168.50.11", "AA:00:00:00:00:02", now))
     pipeline.finalize()
+    return pipeline
 
-    everything = pipeline.summary()
-    assert len(everything["devices"]) == 2
 
-    recent = pipeline.summary(active_within_seconds=15 * 60)
-    assert [d["ip"] for d in recent["devices"]] == ["192.168.50.11"]
-    assert all(f["src_ip"] == "192.168.50.11" for f in recent["flows"])
+def test_a_departed_device_is_still_listed():
+    """It is still a device on this network, and an admin needs to see that
+    it exists. Removing it would make a phone that went home indistinguishable
+    from one that was never here."""
+    data = _two_devices_one_long_gone().summary(active_within_seconds=15 * 60)
+    assert sorted(d["ip"] for d in data["devices"]) == ["192.168.50.10", "192.168.50.11"]
+
+
+def test_a_departed_device_is_marked_rather_than_removed():
+    data = _two_devices_one_long_gone().summary(active_within_seconds=15 * 60)
+    by_ip = {d["ip"]: d["active"] for d in data["devices"]}
+    assert by_ip == {"192.168.50.10": False, "192.168.50.11": True}
+
+
+def test_a_departed_device_contributes_no_current_activity():
+    """The half the window is actually for: what it did an hour ago belongs
+    in the history, not in a picture of what is happening."""
+    data = _two_devices_one_long_gone().summary(active_within_seconds=15 * 60)
+    assert all(f["src_ip"] == "192.168.50.11" for f in data["flows"])
+    assert all(s["device_ip"] == "192.168.50.11" for s in data["sessions"])
+
+
+def test_everything_is_active_when_no_window_is_set():
+    """A one-shot run over a fixed capture has no "now" to be outside of."""
+    data = _two_devices_one_long_gone().summary()
+    assert all(d["active"] for d in data["devices"])
+    assert len(data["flows"]) == 2
 
 
 def test_without_a_window_nothing_is_hidden():
