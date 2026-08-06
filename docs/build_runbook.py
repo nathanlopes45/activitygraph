@@ -785,7 +785,7 @@ p("Blocking a domain covers its subdomains but not its siblings: blocking "
   "DNS answer can also reach the address until that cache expires, so a block "
   "is firm within about a minute rather than instantly.")
 
-p("A blacklist entry covers the whole service, not only the domain typed. Blocking youtube.com also covers googlevideo.com, ytimg.com and the app's own API, because a phone app does not visit a website: the YouTube app streams from googlevideo.com and never touches youtube.com at all. A daily limit deliberately does not do this, blocking the front door and leaving the rest reachable so an embedded video still plays. The two differ because the intent differs: a blacklist says none of this, a limit says enough of this.")
+p("Blocking is done by <b>naming the service</b>, not the address. The panel offers YouTube, TikTok, Instagram and the rest as one-click buttons, and typing youtube.com or pasting a YouTube link means the same thing. Either way the whole service goes: the website, the phone app, and the hosts the video actually comes from, which is why blocking a single domain used to leave the app working. A site that is not one of the known services is blocked by its domain, typed into the field beside the buttons. A daily limit deliberately does not do this, blocking the front door and leaving the rest reachable so an embedded video still plays. The two differ because the intent differs: a blacklist says none of this, a limit says enough of this.")
 
 h3("9.1  Create the admin account first")
 callout("Whoever registers first becomes the admin",

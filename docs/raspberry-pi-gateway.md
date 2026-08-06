@@ -684,11 +684,17 @@ Blocking a domain covers its subdomains but not its siblings: blocking
 `tiktok.com` does not block `tiktokcdn.com`, which is a separate domain.
 Add it as well if you want the app fully unreachable.
 
-A blacklist entry covers the whole service, not only the domain typed.
-Blocking `youtube.com` also covers `googlevideo.com`, `ytimg.com` and
-the app's own API, because a phone app does not visit a website: the
+Blocking is done by **naming the service**, not the address. The panel
+offers YouTube, TikTok, Instagram and the rest as one-click buttons, and
+typing `youtube.com` or pasting a YouTube link means the same thing.
+Either way the whole service goes: the website, the phone app, and the
+hosts the video actually comes from. Nobody needs to know that the
 YouTube app streams from `googlevideo.com` and never touches
-`youtube.com` at all. Blocking only what was typed left the app working.
+`youtube.com` at all, which is why blocking a single domain used to
+leave the app working.
+
+A site that is not one of the known services is blocked by its domain,
+typed into the field beside the buttons.
 
 A **daily limit** deliberately does not do this. It blocks the front door
 and leaves the rest reachable, so a video embedded in an article still

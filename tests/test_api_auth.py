@@ -531,14 +531,19 @@ def test_releasing_a_device_takes_its_name_back(env):
 # someone else's list requires being the admin.
 
 @pytest.mark.parametrize("typed,stored", [
-    ("tiktok.com", "tiktok.com"),
-    ("TikTok.com", "tiktok.com"),
-    ("www.tiktok.com", "tiktok.com"),
-    ("https://www.tiktok.com/foryou?lang=en", "tiktok.com"),
-    ("  instagram.com/  ", "instagram.com"),
-    ("tiktok.com:443", "tiktok.com"),
+    # A recognised service is stored as the service, however it was written,
+    # so blocking it covers the app as well as the website.
+    ("tiktok.com", "service:TikTok"),
+    ("TikTok.com", "service:TikTok"),
+    ("www.tiktok.com", "service:TikTok"),
+    ("https://www.tiktok.com/foryou?lang=en", "service:TikTok"),
+    ("  instagram.com/  ", "service:Instagram"),
+    ("tiktok.com:443", "service:TikTok"),
+    # Anything else keeps its domain, since there is nothing wider to mean.
+    ("https://shop.example.invalid/x", "shop.example.invalid"),
+    ("WWW.Example.Invalid", "example.invalid"),
 ])
-def test_what_someone_types_is_reduced_to_the_domain(typed, stored):
+def test_what_someone_types_is_reduced_to_what_they_meant(typed, stored):
     """People paste URLs and type "www." out of habit. Storing those
     verbatim gives a list nobody can reason about and a rule that has to
     match every variant."""
@@ -560,10 +565,10 @@ def test_a_user_manages_their_own_list(env):
     token = issue_token(sam.id, SECRET)
 
     routes["add_blacklist"](FakeRequest(token=token), {"pattern": "https://www.TikTok.com/foryou"})
-    assert accounts.blocked_for(sam.id) == ["tiktok.com"]
+    assert accounts.blocked_for(sam.id) == ["service:TikTok"]
 
     data = body(routes["get_blacklist"](FakeRequest(token=token)))
-    assert data["patterns"] == ["tiktok.com"]
+    assert data["patterns"] == ["service:TikTok"]
     assert data["group"] == "Sam's group"
 
 
@@ -572,7 +577,7 @@ def test_adding_the_same_entry_twice_is_harmless(env):
     sam = accounts.create_user("Sam", "password123")
     for _ in range(3):
         accounts.add_blocked(sam.id, "tiktok.com")
-    assert accounts.blocked_for(sam.id) == ["tiktok.com"]
+    assert accounts.blocked_for(sam.id) == ["service:TikTok"]
 
 
 def test_one_group_cannot_edit_anothers_list(env):
@@ -613,7 +618,7 @@ def test_the_admin_sees_every_group_with_the_devices_it_applies_to(env):
     data = body(routes["get_blacklist"](FakeRequest(token=issue_token(admin.id, SECRET))))
     assert data["is_admin"] is True
     sams = [g for g in data["groups"] if g["username"] == "Sam"][0]
-    assert sams["patterns"] == ["tiktok.com"]
+    assert sams["patterns"] == ["service:TikTok"]
     assert sams["device_macs"] == [device.mac.upper()]
 
 
@@ -624,7 +629,7 @@ def test_the_admin_can_update_another_groups_list(env):
 
     routes["add_blacklist"](FakeRequest(token=issue_token(admin.id, SECRET)),
                             {"pattern": "tiktok.com", "user_id": sam.id})
-    assert accounts.blocked_for(sam.id) == ["tiktok.com"]
+    assert accounts.blocked_for(sam.id) == ["service:TikTok"]
 
 
 def test_removing_an_entry_that_is_not_there_says_so(env):

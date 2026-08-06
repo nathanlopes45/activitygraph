@@ -212,3 +212,16 @@ def test_the_admin_panel_draws_the_blacklists_it_fetches(page):
     admin_branch = page.split("if (quotas.is_admin) {")[1].split("return;")[0]
     assert "blocked.groups" in admin_branch
     assert "blockedByUser" in admin_branch
+
+
+def test_blocking_offers_services_by_name(page):
+    """Typing a domain requires knowing which one, which is the thing a
+    non-technical person cannot be expected to know."""
+    limits = page.split("async function refreshLimits(")[1].split("\nasync function")[0]
+    assert "blocked.suggestions" in limits
+    assert '"service:" + service' in limits
+
+
+def test_a_service_block_reads_as_a_service(page):
+    """Stored as "service:YouTube"; nobody should have to see that."""
+    assert '" (app and website)"' in page
