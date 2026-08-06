@@ -474,6 +474,12 @@ def main() -> None:
                               "{\"brand\": \"tplink\", \"host\": \"192.168.1.1\", \"username\": \"admin\", "
                               "\"password\": \"...\"}. Kept in its own file (not a CLI argument) so the "
                               "password never lands in shell history. Currently supported brands: tplink.")
+    parser.add_argument("--enforce-blacklist", action="store_true",
+                         help="Actually drop traffic from a group's devices to the sites on "
+                              "its blacklist, rather than only recording the list. Writes "
+                              "nftables rules in a table of its own, leaving your other rules "
+                              "untouched, and removes them if anything goes wrong rather than "
+                              "leaving half a ruleset live. Needs root, and needs --accounts.")
     parser.add_argument("--show-background", action="store_true",
                          help="Include machine traffic in the headline panels: DNS, DHCP, "
                               "clock sync, OS and browser update checks, ad and analytics "
@@ -535,6 +541,10 @@ def main() -> None:
     if invalid:
         parser.error(f"capture filter is not valid: {invalid}\n  filter: {capture_filter}")
 
+    if args.enforce_blacklist and not args.accounts:
+        parser.error("--enforce-blacklist needs --accounts: without accounts there are no "
+                     "groups, and a blacklist would have nobody to apply to")
+
     if args.arp_sweep and args.demo:
         print("[activitygraph] Warning: --arp-sweep has no effect in --demo mode (no real interface to sweep).",
               file=sys.stderr)
@@ -594,7 +604,8 @@ def main() -> None:
             # BackgroundCapture doesn't need to know about them.
             # No exclude_macs here: it belongs to the device registry, which
             # the pipeline above already owns.
-            capture = BackgroundCapture(pipeline, interface=args.interface, history_store=history_store, arp_sweep=args.arp_sweep, arp_sweep_subnet=args.arp_sweep_subnet, arp_sweep_timeout=args.arp_sweep_timeout, router_devices=args.router_devices, router_credentials=args.router_credentials, dhcp_leases=args.dhcp_leases, bpf_filter=capture_filter)
+            capture = BackgroundCapture(pipeline, interface=args.interface, history_store=history_store, arp_sweep=args.arp_sweep, arp_sweep_subnet=args.arp_sweep_subnet, arp_sweep_timeout=args.arp_sweep_timeout, router_devices=args.router_devices, router_credentials=args.router_credentials, dhcp_leases=args.dhcp_leases, bpf_filter=capture_filter,
+                                        accounts=accounts, enforce_blacklist=args.enforce_blacklist)
             try:
                 capture.start()
             except PermissionError:

@@ -521,6 +521,8 @@ class BackgroundCapture:
         max_restart_backoff_seconds: float = 60.0,
         dhcp_leases: Optional[str] = None,
         bpf_filter: Optional[str] = None,
+        accounts=None,
+        enforce_blacklist: bool = False,
     ) -> None:
         from .collector import TrafficCollector
 
@@ -541,6 +543,9 @@ class BackgroundCapture:
         self._capture_thread: Optional[threading.Thread] = None
         self._flush_thread: Optional[threading.Thread] = None
         self._capture_restarts = 0
+        self.accounts = accounts
+        self.enforce_blacklist = enforce_blacklist
+        self._last_ruleset = None
         self._capture_error: Optional[str] = None
 
     def start(self) -> None:
@@ -633,6 +638,30 @@ class BackgroundCapture:
                 # Hostnames learned since the last tick, written here rather
                 # than per DNS answer to keep disk writes off the capture path.
                 self.pipeline.services.flush()
+            self._refresh_blacklist()
+
+    def _refresh_blacklist(self) -> None:
+        """Rebuild the firewall rules from the current lists and DNS cache.
+
+        Runs on the same tick as everything else because the address a
+        domain resolves to changes, and a blacklist that only knew the
+        addresses seen at startup would leak more of the domain every hour.
+        """
+        if self.accounts is None or not self.enforce_blacklist:
+            return
+        from .enforcement import apply_ruleset, render_ruleset
+
+        addresses = {(d.mac or "").upper(): (d.addresses or [d.ip])
+                     for d in self.pipeline.devices.all_devices()}
+        script = render_ruleset(self.accounts.blocked_by_group(), addresses,
+                                self.pipeline.services._dns_cache)
+        if script == self._last_ruleset:
+            return  # nothing changed; reloading would be pointless churn
+        applied, message = apply_ruleset(script)
+        self._last_ruleset = script if applied else None
+        if not applied:
+            print(f"[activitygraph] Warning: could not apply blacklist rules ({message}). "
+                  "Nothing is being blocked.", file=sys.stderr)
 
     def _record_closed_sessions(self) -> None:
         from datetime import datetime, timezone
