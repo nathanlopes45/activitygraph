@@ -286,3 +286,41 @@ def test_a_group_with_only_a_spent_limit_still_gets_a_rule():
           "quota_patterns": ["tiktok.com"], "device_macs": [SAMS_PHONE]}],
         ADDRESSES, DNS)
     assert script is not None and "1.2.3.4" in script
+
+
+# ---------------- naming a service, not a domain ----------------
+
+# Somebody who wants YouTube gone should be able to say "YouTube". Knowing
+# that the app streams from googlevideo.com is not something to require.
+
+def test_choosing_a_service_blocks_everything_it_uses():
+    found = addresses_for_patterns(["service:YouTube"], APP_DNS)
+    assert set(found) == {"1.1.1.1", "2.2.2.2", "3.3.3.3", "4.4.4.4"}
+
+
+def test_choosing_a_service_leaves_other_services_alone():
+    assert "9.9.9.9" not in addresses_for_patterns(["service:YouTube"], APP_DNS)
+
+
+def test_a_plain_domain_still_works_for_anything_unrecognised():
+    """Not every site is a service anyone has a rule for."""
+    dns = {"7.7.7.7": "www.example.invalid", "8.8.8.8": "elsewhere.invalid"}
+    assert addresses_for_patterns(["example.invalid"], dns) == ["7.7.7.7"]
+
+
+@pytest.mark.parametrize("typed", [
+    "YouTube", "youtube", "YOUTUBE", "youtube.com",
+    "https://www.youtube.com/watch?v=abc",
+])
+def test_every_way_of_saying_youtube_means_the_service(typed):
+    """Typing the address is the same intent as naming it, so both reach the
+    whole service rather than one host."""
+    from activitygraph.accounts import normalise_blocked_pattern
+
+    assert normalise_blocked_pattern(typed) == "service:YouTube"
+
+
+def test_an_unrecognised_site_is_stored_as_the_domain():
+    from activitygraph.accounts import normalise_blocked_pattern
+
+    assert normalise_blocked_pattern("https://example.invalid/page") == "example.invalid"

@@ -1814,7 +1814,11 @@ async function refreshLimits() {
 
   patterns.forEach(pattern => {
     const line = el("div", { class: "claimed-device" });
-    line.appendChild(el("div", { class: "cd-name" }, pattern));
+    // Shown as the person wrote it, not as it is stored.
+    const shown = pattern.startsWith("service:")
+      ? pattern.slice(8) + " (app and website)"
+      : pattern;
+    line.appendChild(el("div", { class: "cd-name" }, shown));
     const remove = el("button", { class: "btn", type: "button" }, "Unblock");
     remove.addEventListener("click", async () => {
       await fetch("/api/blacklist", {
@@ -1827,8 +1831,30 @@ async function refreshLimits() {
     container.appendChild(line);
   });
 
+  // One click per service, because knowing that YouTube video arrives
+  // from googlevideo.com is not something anyone should have to.
+  const quick = el("div", { class: "filter-row", style: "padding:0;border:0;" });
+  quick.appendChild(el("span", { class: "filter-label" }, "Block"));
+  (blocked.suggestions || []).forEach(service => {
+    const already = patterns.includes("service:" + service);
+    const pick = el("button", { class: already ? "chip on" : "chip", type: "button" }, service);
+    pick.addEventListener("click", async () => {
+      if (already) {
+        await fetch("/api/blacklist", {
+          method: "DELETE", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pattern: "service:" + service }),
+        });
+      } else {
+        await postJSON("/api/blacklist", { pattern: service });
+      }
+      refreshLimits();
+    });
+    quick.appendChild(pick);
+  });
+  container.appendChild(quick);
+
   const blockForm = el("form", { class: "inline-form" });
-  const blockField = el("input", { type: "text", placeholder: "Site, e.g. tiktok.com",
+  const blockField = el("input", { type: "text", placeholder: "Or any other site, e.g. example.com",
                                    "aria-label": "Site to block" });
   blockForm.appendChild(blockField);
   blockForm.appendChild(el("button", { class: "btn", type: "submit" }, "Block site"));

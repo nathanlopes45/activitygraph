@@ -55,18 +55,29 @@ def addresses_for_patterns(patterns: Iterable[str], dns_cache: dict,
     stays narrow, because there the point is to stop the front door while
     leaving a video embedded in an article alone.
     """
-    wanted = {p.strip().lower().lstrip(".") for p in patterns if p and p.strip()}
-    if not wanted:
-        return []
+    from .accounts import SERVICE_PREFIX
+    from .service_rules import classify_domain
 
-    services = set()
+    wanted, services = set(), set()
+    for raw in patterns or []:
+        text = (raw or "").strip()
+        if not text:
+            continue
+        # "service:YouTube" is what somebody meant when they said YouTube:
+        # the app, the site, and whatever host the video comes from.
+        if text.lower().startswith(SERVICE_PREFIX):
+            services.add(text[len(SERVICE_PREFIX):])
+        else:
+            wanted.add(text.lower().lstrip("."))
+
     if whole_service:
-        from .service_rules import classify_domain
-
         for domain in wanted:
             match = classify_domain(domain)
             if match:
                 services.add(match.service)
+
+    if not wanted and not services:
+        return []
 
     found = []
     for address, hostname in dns_cache.items():

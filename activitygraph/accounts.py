@@ -51,7 +51,38 @@ class AccountError(Exception):
     """Raised for conditions the caller is expected to show to a user."""
 
 
+SERVICE_PREFIX = "service:"
+
+
 def normalise_blocked_pattern(pattern: str) -> str:
+    """Reduce what someone typed to a service name or the domain it names.
+
+    A service name is preferred whenever the text matches one, because
+    "YouTube" is what a person means and covers the app, the website and
+    whatever host the video actually comes from. Knowing that YouTube video
+    arrives from googlevideo.com is not something anyone should need.
+    """
+    text = (pattern or "").strip()
+    if not text:
+        return ""
+
+    from .service_rules import PRIMARY_DOMAINS
+
+    for service in PRIMARY_DOMAINS:
+        if text.lower() == service.lower():
+            return SERVICE_PREFIX + service
+    # Typing a service's own address means the service, not just that host.
+    guessed = _normalise_domain(text)
+    if guessed:
+        from .service_rules import classify_domain
+
+        match = classify_domain(guessed)
+        if match and match.service in PRIMARY_DOMAINS:
+            return SERVICE_PREFIX + match.service
+    return guessed
+
+
+def _normalise_domain(pattern: str) -> str:
     """Reduce what someone typed to the domain it names.
 
     People paste URLs, type "www." out of habit, and capitalise

@@ -272,9 +272,14 @@ def create_app(pipeline, live: bool = False, history_store=None, capture=None,
         if user.is_admin:
             return {"is_admin": True, "enforcing": enforce_blacklist,
                     "groups": accounts.blocked_by_group()}
+        from .service_rules import PRIMARY_DOMAINS
+
         return {"is_admin": False, "enforcing": enforce_blacklist,
                 "group": user.group_name,
-                "patterns": accounts.blocked_for(user.id)}
+                "patterns": accounts.blocked_for(user.id),
+                # Offered as one-click choices so nobody has to know
+                # which domains a service actually uses.
+                "suggestions": sorted(PRIMARY_DOMAINS)}
 
     def _blacklist_target(user, payload):
         """Whose list is being edited, or None if the caller may not.
