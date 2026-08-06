@@ -306,3 +306,41 @@ def test_summary_group_time_is_union_not_sum():
     assert alice["device_count"] == 2
     # Overlapping devices: wall-clock union is strictly less than device-time sum.
     assert alice["seconds"] < alice["device_seconds"]
+
+
+# ---------------- only what is happening now ----------------
+
+def test_active_within_hides_devices_and_flows_that_have_gone_quiet():
+    """A gateway runs for weeks. Without a window the dashboard accumulates
+    every device and service ever seen, burying what is happening now."""
+    from datetime import datetime, timedelta, timezone
+
+    from activitygraph.main import Pipeline
+    from activitygraph.models import Packet
+
+    now = datetime.now(timezone.utc)
+    pipeline = Pipeline(idle_timeout_seconds=1.0)
+
+    def packet(ip, mac, when):
+        return Packet(timestamp=when, src_ip=ip, dst_ip="1.1.1.1", proto="TCP",
+                      length=500, src_port=5000, dst_port=443, src_mac=mac)
+
+    pipeline.ingest(packet("192.168.50.10", "AA:00:00:00:00:01", now - timedelta(hours=6)))
+    pipeline.ingest(packet("192.168.50.11", "AA:00:00:00:00:02", now))
+    pipeline.finalize()
+
+    everything = pipeline.summary()
+    assert len(everything["devices"]) == 2
+
+    recent = pipeline.summary(active_within_seconds=15 * 60)
+    assert [d["ip"] for d in recent["devices"]] == ["192.168.50.11"]
+    assert all(f["src_ip"] == "192.168.50.11" for f in recent["flows"])
+
+
+def test_without_a_window_nothing_is_hidden():
+    """The default must stay the full picture, which is what a one-shot
+    --live or --demo run is for."""
+    from activitygraph.main import run_demo
+
+    pipeline = run_demo(idle_timeout=5.0)
+    assert len(pipeline.summary(active_within_seconds=None)["devices"]) == 3

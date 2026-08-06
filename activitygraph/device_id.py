@@ -269,6 +269,18 @@ class DeviceRegistry:
             self._touch(packet.src_ip, packet.src_mac, now,
                         packet.hostname_hint, packet.hostname_source)
 
+    def remember_name(self, mac: Optional[str], hostname: Optional[str],
+                      source: Optional[str] = None) -> None:
+        """Record what a device is called without claiming it is here.
+
+        A DHCP lease table is a record of addresses handed out, not of who is
+        on the network now: leases outlive the connection by hours, so
+        treating each one as a sighting fills the dashboard with devices that
+        left this morning. The name is worth keeping either way, and attaches
+        to the device the moment it does send something.
+        """
+        self._remember_name(mac, hostname, source)
+
     def _remember_name(self, mac: Optional[str], hostname_hint: Optional[str],
                        hostname_source: Optional[str] = None,
                        fallback_key: Optional[str] = None):

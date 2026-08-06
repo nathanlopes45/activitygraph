@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock, mock_open, patch
+from unittest.mock import mock_open, patch
 
 from activitygraph.collector import default_route_interface, warn_if_capturing_wan
 from activitygraph.dhcp_leases import (
@@ -73,42 +73,63 @@ def test_load_leases_probes_defaults_when_no_path_given():
 
 # ---------------- ingestion ----------------
 
-def test_ingest_registers_every_leased_device(tmp_path):
+def test_leases_teach_names_without_claiming_devices_are_present(tmp_path):
+    """A lease records an address handed out, not who is connected now.
+    dnsmasq keeps them for hours after a device leaves, so registering each
+    one filled the dashboard with phones that went out this morning."""
+    from activitygraph.main import Pipeline
+
     path = tmp_path / "dnsmasq.leases"
     path.write_text(SAMPLE)
-
-    received = []
-    pipeline = MagicMock()
-    pipeline.ingest.side_effect = received.append
+    pipeline = Pipeline(idle_timeout_seconds=5.0)
 
     assert ingest_leases(pipeline, str(path)) == 3
-    assert [p.arp_sender_ip for p in received] == ["192.168.50.20", "192.168.50.21", "192.168.50.22"]
-    assert received[1].hostname_hint == "iPhone"
-    assert received[0].proto == "ARP"
-    # Zero length so leases contribute identity but never fake traffic volume.
-    assert all(p.length == 0 for p in received)
+    assert pipeline.devices.all_devices() == [], "a lease is not a sighting"
 
 
-def test_ingest_missing_file_does_not_call_pipeline():
-    pipeline = MagicMock()
-    assert ingest_leases(pipeline, "/nonexistent/leases") == 0
-    pipeline.ingest.assert_not_called()
+def test_the_learned_name_attaches_when_the_device_appears(tmp_path):
+    """Dropping the sighting must not drop the name with it: the lease table
+    is the only place some phones ever announce one."""
+    from datetime import datetime, timezone
 
-
-def test_ingest_supplies_mac_for_group_resolution(tmp_path):
-    """Grouping is MAC-keyed, so leases must carry the MAC -- this is what
-    makes grouping work even when the capture yields no link-layer header."""
     from activitygraph.main import Pipeline
+    from activitygraph.models import Packet
+
+    path = tmp_path / "dnsmasq.leases"
+    path.write_text(SAMPLE)
+    pipeline = Pipeline(idle_timeout_seconds=5.0)
+    ingest_leases(pipeline, str(path))
+
+    pipeline.ingest(Packet(
+        timestamp=datetime(2026, 8, 4, tzinfo=timezone.utc),
+        src_ip="192.168.50.21", dst_ip="1.1.1.1", proto="UDP", length=100,
+        src_mac="AA:BB:CC:00:00:02"))
+
+    assert pipeline.devices.get("192.168.50.21").display_name() == "iPhone"
+
+
+def test_grouping_still_works_for_a_device_named_from_a_lease(tmp_path):
+    """Grouping is MAC-keyed. The lease supplies the name and the device
+    supplies the MAC when it appears, so both still land on the same entry."""
+    from datetime import datetime, timezone
+
+    from activitygraph.main import Pipeline
+    from activitygraph.models import Packet
 
     path = tmp_path / "dnsmasq.leases"
     path.write_text(SAMPLE)
     pipeline = Pipeline(idle_timeout_seconds=5.0,
                         device_groups={"AA:BB:CC:00:00:02": "Alice"})
     ingest_leases(pipeline, str(path))
+    pipeline.ingest(Packet(
+        timestamp=datetime(2026, 8, 4, tzinfo=timezone.utc),
+        src_ip="192.168.50.21", dst_ip="1.1.1.1", proto="UDP", length=100,
+        src_mac="AA:BB:CC:00:00:02"))
 
     device = pipeline.devices.get("192.168.50.21")
     assert device.hostname == "iPhone"
     assert device.group == "Alice"
+
 
 
 # ---------------- WAN capture guard ----------------

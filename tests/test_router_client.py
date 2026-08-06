@@ -58,18 +58,22 @@ def test_ingest_router_devices_feeds_devices_through_pipeline(tmp_path):
         RouterDevice(ip="192.168.1.102", mac="AA:BB:CC:00:00:01", hostname=None),
     ]
 
-    received = []
+    learned = []
     pipeline = MagicMock()
-    pipeline.ingest.side_effect = received.append
+    pipeline.devices.remember_name.side_effect = \
+        lambda mac, hostname, source=None: learned.append((mac, hostname, source))
 
     with patch("activitygraph.router_client.create_router_client", return_value=fake_client):
         ingest_router_devices(pipeline, str(creds_file))
 
-    assert len(received) == 2
-    assert received[0].arp_sender_ip == "192.168.1.101"
-    assert received[0].arp_sender_mac == "AA:BB:CC:00:00:02"
-    assert received[0].hostname_hint == "Alices-Phone"
-    assert received[1].hostname_hint is None
+    # Names, not sightings. A router's client list includes devices that are
+    # not currently connected, so registering each one would show devices as
+    # present that are not there.
+    assert learned == [
+        ("AA:BB:CC:00:00:02", "Alices-Phone", "lease"),
+        ("AA:BB:CC:00:00:01", None, "lease"),
+    ]
+    pipeline.ingest.assert_not_called()
     fake_client.close.assert_called_once()
 
 
