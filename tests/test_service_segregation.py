@@ -182,3 +182,86 @@ def test_only_changed_mappings_are_queued_for_writing(tmp_path):
     detector.observe(dns_packet("example.com", "203.0.113.5"))
     assert detector._unsaved == {}, "an unchanged answer should not be re-queued"
     store.close()
+
+
+# ---------------- CDN-wrapped hostnames ----------------
+
+# A CDN hosts other companies' sites inside its own domain, so the
+# registrable domain is the CDN's and the name that means something to a
+# person is buried a label or two earlier.
+
+@pytest.mark.parametrize("hostname,service", [
+    ("amp-api-edge-cdn-lb.itunes-apple.com.akadns.net", "Apple Services"),
+    ("amp-api-edge-lb.itunes-apple.com.akadns.net", "Apple Services"),
+    ("gateway.icloud.com.akadns.net", "iCloud"),
+    ("p12-content.icloud.com.akadns.net", "iCloud"),
+])
+def test_a_cdn_wrapped_hostname_resolves_to_the_service_it_fronts(hostname, service):
+    assert match(hostname).service == service
+
+
+@pytest.mark.parametrize("hostname", [
+    "brave-core-ext.s3.brave.com",
+    "collector.bsg.brave.com",
+    "componentupdater.brave.com",
+])
+def test_browser_background_traffic_is_named_and_kept_out_of_the_way(hostname):
+    """Browsers phone home constantly for extension manifests and telemetry.
+    Worth naming, but nobody chose to do it."""
+    result = match(hostname)
+    assert result.service == "Brave"
+    assert result.category == "System"
+
+
+def test_a_cdn_name_wrapping_nothing_still_reports_the_cdn():
+    """d1234.cloudfront.net unwraps to "d1234", which names nothing, so the
+    honest answer is the CDN itself rather than a guess."""
+    assert match("d1234.cloudfront.net").service == "CDN (CloudFront)"
+
+
+def test_unwrapping_reports_the_hostname_that_was_actually_seen():
+    """The flow has to stay traceable to what crossed the wire, so the
+    unwrapped form is used for matching only."""
+    result = match("amp-api-edge-lb.itunes-apple.com.akadns.net")
+    assert result.domain == "amp-api-edge-lb.itunes-apple.com.akadns.net"
+
+
+# ---------------- plumbing is not activity ----------------
+
+def test_protocol_traffic_is_kept_out_of_the_headline_panels():
+    """DNS precedes every connection, so it appears on every device and
+    would otherwise crowd out the answer to where the time went."""
+    from activitygraph.main import run_demo
+
+    pipeline = run_demo(idle_timeout=5.0)
+    services = {s["service"] for s in pipeline.summary()["ranked_services"]}
+    assert "DNS" not in services
+
+
+def test_the_same_traffic_is_shown_on_request():
+    from activitygraph.main import run_demo
+
+    pipeline = run_demo(idle_timeout=5.0)
+    services = {s["service"] for s in
+                pipeline.summary(include_background=True)["ranked_services"]}
+    assert "DNS" in services
+
+
+def test_what_was_set_aside_is_reported_rather_than_silently_dropped():
+    from activitygraph.main import run_demo
+
+    background = run_demo(idle_timeout=5.0).summary()["background"]
+    assert background["flow_count"] > 0
+    assert background["byte_count"] > 0
+    assert background["included"] is False
+    assert "Infrastructure" in background["categories"]
+
+
+def test_the_raw_flow_list_keeps_everything():
+    """Stats for Nerds is where you go when something looks wrong, so it
+    must not be curated."""
+    from activitygraph.main import run_demo
+
+    pipeline = run_demo(idle_timeout=5.0)
+    assert len(pipeline.summary()["flows"]) == \
+        len(pipeline.summary(include_background=True)["flows"])

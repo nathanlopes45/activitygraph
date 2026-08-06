@@ -68,7 +68,20 @@ DOMAIN_RULES: list[tuple[str, str, str]] = [
     (r"(^|\.)hackerrank\.com$", "HackerRank", "Software Development"),
     (r"(^|\.)kaggle\.com$", "Kaggle", "Software Development"),
     (r"(^|\.)readthedocs\.(io|org)$", "Read the Docs", "Software Development"),
-    (r"(^|\.)mozilla\.(org|net)$", "Firefox", "System"),
+    # --- Browsers and their background chatter ---
+    # Every browser phones home constantly for extension manifests, safe
+    # browsing lists and telemetry. It is not something anyone chose to do,
+    # so it belongs with the other machine traffic rather than in a
+    # behavioural category.
+    (r"(^|\.)mozilla\.(org|net|com)$", "Firefox", "System"),
+    (r"(^|\.)brave\.com$", "Brave", "System"),
+    (r"(^|\.)brave\.software$", "Brave", "System"),
+    (r"(^|\.)bravesoftware\.com$", "Brave", "System"),
+    (r"(^|\.)chrome\.google\.com$", "Chrome", "System"),
+    (r"(^|\.)clients[0-9]*\.google\.com$", "Chrome", "System"),
+    (r"(^|\.)vivaldi\.(com|net)$", "Vivaldi", "System"),
+    (r"(^|\.)opera\.com$", "Opera", "System"),
+    (r"(^|\.)duckduckgo-owned\.com$", "DuckDuckGo", "Web Browsing"),
 
     # --- Finance ---
     (r"(^|\.)paypal\.com$", "PayPal", "Finance"),
@@ -211,6 +224,13 @@ DOMAIN_RULES: list[tuple[str, str, str]] = [
     (r"(^|\.)apple\.com$", "Apple Services", "Infrastructure"),
     (r"(^|\.)aaplimg\.com$", "Apple Services", "Infrastructure"),
     (r"(^|\.)mzstatic\.com$", "Apple Services", "Infrastructure"),
+    # Apple fronts most of its services through Akamai, and the name that
+    # survives is a hyphenated variant rather than apple.com itself. These
+    # are reached after unwrapping the CDN suffix: see unwrap_cdn_hostname.
+    (r"(^|\.)itunes-apple\.com", "Apple Services", "Infrastructure"),
+    (r"(^|\.)apple-cloudkit\.com", "iCloud", "Productivity"),
+    (r"(^|\.)apple-dns\.net", "Apple Services", "Infrastructure"),
+    (r"(^|\.)cdn-apple\.com", "Apple Services", "Infrastructure"),
     (r"(^|\.)push\.apple\.com$", "Apple Push Notifications", "System"),
     (r"(^|\.)icloud\.com$", "iCloud", "Productivity"),
     (r"(^|\.)akamai(edge|hd|zed)?\.net$", "CDN (Akamai)", "Infrastructure"),
@@ -231,6 +251,14 @@ DOMAIN_RULES: list[tuple[str, str, str]] = [
 ]
 
 _COMPILED_DOMAIN_RULES = [(re.compile(pattern, re.IGNORECASE), svc, cat) for pattern, svc, cat in DOMAIN_RULES]
+
+# Categories nobody chose to generate. DNS lookups, DHCP renewals, clock
+# sync, OS and browser update checks, ad and analytics beacons: all real
+# traffic, none of it something a person did. Left in the headline panels
+# they crowd out the answer to "where did my time go" with plumbing, and
+# DNS in particular appears on nearly every device because it precedes
+# everything else. Reported separately rather than discarded.
+BACKGROUND_CATEGORIES = frozenset({"Infrastructure", "System", "Ads and Tracking"})
 
 # Fallback classification purely by well-known port, used when there's no
 # domain/SNI available at all (e.g. raw non-HTTP(S) traffic).
@@ -283,12 +311,64 @@ def registrable_domain(hostname: str) -> str:
     return last_two
 
 
-def classify_domain(hostname: Optional[str]) -> Optional[ServiceMatch]:
-    if not hostname:
-        return None
+# Content delivery networks host other companies' sites inside their own
+# domain, so the registrable domain is the CDN's and the name that means
+# something is a label or two earlier:
+#
+#   amp-api-edge-cdn-lb.itunes-apple.com.akadns.net
+#                       ^^^^^^^^^^^^^^^^ the part worth reading
+#
+# Strip the wrapper and the origin name is an ordinary hostname again.
+CDN_WRAPPER_SUFFIXES = (
+    ".akadns.net", ".akamai.net", ".akamaiedge.net", ".akamaized.net",
+    ".akastat.net", ".edgekey.net", ".edgesuite.net", ".edgesuite-staging.net",
+    ".cdn.cloudflare.net", ".fastly.net", ".llnwd.net", ".footprint.net",
+    ".azureedge.net", ".cloudfront.net", ".b-cdn.net",
+)
+
+
+def unwrap_cdn_hostname(hostname: str) -> Optional[str]:
+    """The origin hostname a CDN name wraps, or None if it wraps nothing."""
+    lowered = hostname.lower().strip(".")
+    for suffix in CDN_WRAPPER_SUFFIXES:
+        if lowered.endswith(suffix) and len(lowered) > len(suffix):
+            inner = lowered[: -len(suffix)]
+            # Only interesting if a domain survives. "d1234.cloudfront.net"
+            # unwraps to "d1234", which names nothing.
+            return inner if "." in inner else None
+    return None
+
+
+def _match_rules(hostname: str) -> Optional[ServiceMatch]:
     for pattern, service, category in _COMPILED_DOMAIN_RULES:
         if pattern.search(hostname):
             return ServiceMatch(domain=hostname, service=service, category=category, confidence=1.0)
+    return None
+
+
+def classify_domain(hostname: Optional[str]) -> Optional[ServiceMatch]:
+    """Match a hostname against the rules, unwrapping CDN names if needed.
+
+    Four passes, narrowing each time: the hostname as given, its registrable
+    domain, then both again with any CDN wrapper stripped. The last two are
+    what turn an Akamai or CloudFront name back into the service a person
+    would recognise.
+    """
+    if not hostname:
+        return None
+
+    match = _match_rules(hostname) or _match_rules(registrable_domain(hostname))
+    if match:
+        return match
+
+    inner = unwrap_cdn_hostname(hostname)
+    if inner:
+        match = _match_rules(inner) or _match_rules(registrable_domain(inner))
+        if match:
+            # Report the name that was actually seen, not the unwrapped one,
+            # so the flow can still be traced back to what crossed the wire.
+            return ServiceMatch(domain=hostname, service=match.service,
+                                category=match.category, confidence=0.9)
     return None
 
 

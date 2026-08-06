@@ -108,3 +108,7 @@ def test_serve_live_with_a_freshness_window_constructs(tmp_path):
 def test_serve_demo_with_a_freshness_window_constructs(tmp_path):
     run_cli(["--serve", "--serve-source", "demo", "--no-browser", "--active-within", "15"],
             tmp_path)
+
+
+def test_serve_live_showing_background_traffic_constructs(tmp_path):
+    run_cli(BASE_SERVE + ["--show-background"], tmp_path)
