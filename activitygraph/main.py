@@ -505,6 +505,12 @@ def main() -> None:
                               "every device, session and service ever seen, burying what is "
                               "happening now. Affects the live view only: --history-db keeps "
                               "the long-term record either way. Try 15.")
+    parser.add_argument("--include-self", action="store_true",
+                         help="List the capturing machine as a device. It is left out "
+                              "automatically when capturing an interface that does not carry "
+                              "the default route, which means it is acting as a gateway: it "
+                              "forwards everyone's traffic but is nobody's device, and it "
+                              "otherwise appears under every address it answers on.")
     parser.add_argument("--exclude-self", action="store_true",
                          help="Leave this machine out of the device list. On a gateway the "
                               "capturing machine forwards everyone's traffic but is nobody's "
@@ -540,12 +546,21 @@ def main() -> None:
 
     capture_filter = args.bpf_filter or CAPTURE_MODES[args.capture_mode]
     active_window = args.active_within * 60 if args.active_within else None
+    # On a gateway the capturing machine forwards everyone's traffic but is
+    # nobody's device, and it shows up under every address it answers on.
+    # Capturing an interface that does not carry the default route is exactly
+    # what makes a machine a gateway rather than a laptop watching itself, so
+    # that is the condition rather than a flag somebody has to remember.
     excluded_macs = set()
-    if args.exclude_self:
-        from .collector import local_hardware_addresses
-        excluded_macs = local_hardware_addresses()
-        print(f"[activitygraph] Hiding this machine from the device list "
-              f"({len(excluded_macs)} interface(s)).")
+    if not args.include_self:
+        from .collector import default_route_interface, local_hardware_addresses
+
+        is_gateway = bool(args.interface) and args.interface != default_route_interface()
+        if args.exclude_self or is_gateway:
+            excluded_macs = local_hardware_addresses()
+            reason = "requested" if args.exclude_self else "capturing the LAN side"
+            print(f"[activitygraph] Leaving this machine out of the device list "
+                  f"({reason}). Pass --include-self to list it.")
     # Checked here rather than inside the capture thread, where the failure
     # would surface long after the command and behind an already-running,
     # permanently empty dashboard.
@@ -606,7 +621,7 @@ def main() -> None:
             if history_store is not None:
                 history_store.record_sessions_from_summary(pipeline.summary())
                 history_store.record_time_from_pipeline(pipeline)
-            serve(pipeline, live=False, host=args.host, port=args.port, open_browser=not args.no_browser, history_store=history_store, accounts=accounts, secret=secret, active_within_seconds=active_window, include_background=args.show_background)
+            serve(pipeline, live=False, host=args.host, port=args.port, open_browser=not args.no_browser, history_store=history_store, accounts=accounts, secret=secret, active_within_seconds=active_window, include_background=args.show_background, enforce_blacklist=args.enforce_blacklist)
         else:
             # The history database doubles as the learned IP -> hostname
             # store, so a restarted gateway keeps recognising services it
@@ -623,7 +638,7 @@ def main() -> None:
             except PermissionError:
                 print("Live capture requires elevated privileges (try running with sudo).", file=sys.stderr)
                 sys.exit(1)
-            serve(pipeline, live=True, host=args.host, port=args.port, open_browser=not args.no_browser, history_store=history_store, capture=capture, accounts=accounts, secret=secret, active_within_seconds=active_window, include_background=args.show_background)
+            serve(pipeline, live=True, host=args.host, port=args.port, open_browser=not args.no_browser, history_store=history_store, capture=capture, accounts=accounts, secret=secret, active_within_seconds=active_window, include_background=args.show_background, enforce_blacklist=args.enforce_blacklist)
         return
     else:
         parser.error("no mode selected")

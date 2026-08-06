@@ -59,7 +59,8 @@ def _split_filter(raw: str, limit: int) -> list[str]:
 def create_app(pipeline, live: bool = False, history_store=None, capture=None,
                accounts: 'AccountStore | None' = None, secret: bytes = b"",
                active_within_seconds: float | None = None,
-               include_background: bool = False) -> FastAPI:
+               include_background: bool = False,
+               enforce_blacklist: bool = False) -> FastAPI:
     """Build the FastAPI app around an existing Pipeline instance.
 
     In live mode, a background thread should already be feeding packets
@@ -266,9 +267,13 @@ def create_app(pipeline, live: bool = False, history_store=None, capture=None,
         user = current_user(request)
         if user is None:
             return JSONResponse({"error": "Not signed in."}, status_code=401)
+        # Whether any of this actually drops packets. A list that looks
+        # like it blocks but does not is worse than no list at all.
         if user.is_admin:
-            return {"is_admin": True, "groups": accounts.blocked_by_group()}
-        return {"is_admin": False, "group": user.group_name,
+            return {"is_admin": True, "enforcing": enforce_blacklist,
+                    "groups": accounts.blocked_by_group()}
+        return {"is_admin": False, "enforcing": enforce_blacklist,
+                "group": user.group_name,
                 "patterns": accounts.blocked_for(user.id)}
 
     def _blacklist_target(user, payload):
@@ -504,7 +509,8 @@ def _interface_addresses() -> list[str]:
 
 def serve(pipeline, live: bool = False, host: str = "127.0.0.1", port: int = 8420, open_browser: bool = True, history_store=None, capture=None,
           accounts=None, secret: bytes = b"", active_within_seconds: float | None = None,
-          include_background: bool = False) -> None:
+          include_background: bool = False,
+          enforce_blacklist: bool = False) -> None:
     """Blocking call: starts the dashboard server. Ctrl-C to stop."""
     import uvicorn
 
@@ -526,7 +532,8 @@ def serve(pipeline, live: bool = False, host: str = "127.0.0.1", port: int = 842
     app = create_app(pipeline, live=live, history_store=history_store, capture=capture,
                      accounts=accounts, secret=secret,
                      active_within_seconds=active_within_seconds,
-                     include_background=include_background)
+                     include_background=include_background,
+                     enforce_blacklist=enforce_blacklist)
 
     urls = reachable_urls(host, port)
 

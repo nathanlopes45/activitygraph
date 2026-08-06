@@ -427,6 +427,42 @@
     margin-left: 8px;
   }
 
+  .inline-form {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+    margin-top: 12px;
+  }
+  .inline-form input {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 7px 10px;
+    color: var(--text-primary);
+    font-family: var(--sans);
+    font-size: 13px;
+    min-width: 0;
+    flex: 1 1 160px;
+  }
+  .inline-form input:focus { outline: none; border-color: var(--accent-dim); }
+  .limit-warning {
+    border: 1px solid var(--amber);
+    background: rgba(232, 165, 72, 0.09);
+    color: var(--amber);
+    border-radius: 6px;
+    padding: 9px 12px;
+    font-size: 12.5px;
+    line-height: 1.45;
+    margin-bottom: 14px;
+  }
+  .limit-error {
+    color: var(--amber);
+    font-size: 12px;
+    margin-top: 8px;
+    min-height: 1em;
+  }
+
   /* ---------------- this device ---------------- */
 
   .this-device-head {
@@ -1641,7 +1677,7 @@ function renderThisDevice(data, here) {
       // varies by make, by OS version and by whether it is awake; its owner
       // always knows what it is.
       const suggested = here.name && here.name !== here.ip ? here.name : "";
-      const name = prompt("What do you call this device?", suggested);
+      const name = window.prompt("What do you call this device?", suggested);
       if (name === null) return;
       const { ok, data: result } = await postJSON("/api/claim", { name });
       if (!ok) { alert(result.error || "Could not claim this device."); return; }
@@ -1656,6 +1692,11 @@ function renderThisDevice(data, here) {
   }
 }
 
+
+function showLimitError(message) {
+  const box = document.getElementById("limit-error");
+  if (box) box.textContent = message;
+}
 
 function limitRow(row, onChange) {
   const spent = row.used_seconds >= row.daily_seconds;
@@ -1695,6 +1736,15 @@ async function refreshLimits() {
 
   panel.hidden = false;
   container.innerHTML = "";
+
+  // Said before the lists, not after: someone reading a page of blocked
+  // sites should learn immediately whether any of it is being applied.
+  if (blocked.enforcing === false) {
+    container.appendChild(el("div", { class: "limit-warning" },
+      "Recording only. Nothing here is being blocked: the gateway was started "
+      + "without --enforce-blacklist."));
+  }
+
   const limits = quotas.limits || [];
   const patterns = blocked.patterns || [];
 
@@ -1716,17 +1766,29 @@ async function refreshLimits() {
 
   limits.forEach(row => container.appendChild(limitRow(row, refreshLimits)));
 
-  const addLimit = el("button", { class: "btn", type: "button" }, "Add a daily limit");
-  addLimit.addEventListener("click", async () => {
-    const service = prompt("Which service? For example YouTube");
+  // Inline fields rather than prompt(). Two prompts in a row make a
+  // browser offer to suppress further dialogs, and once someone accepts
+  // that, every later prompt returns nothing and the feature silently stops
+  // working with no indication why.
+  const limitForm = el("form", { class: "inline-form" });
+  const limitService = el("input", { type: "text", placeholder: "Service, e.g. YouTube",
+                                     "aria-label": "Service" });
+  const limitMinutes = el("input", { type: "number", min: "1", value: "60",
+                                     "aria-label": "Minutes per day", style: "max-width:110px" });
+  limitForm.appendChild(limitService);
+  limitForm.appendChild(limitMinutes);
+  limitForm.appendChild(el("button", { class: "btn", type: "submit" }, "Add limit"));
+  limitForm.addEventListener("submit", async event => {
+    event.preventDefault();
+    const service = limitService.value.trim();
     if (!service) return;
-    const minutes = prompt("How many minutes a day?", "60");
-    if (minutes === null) return;
-    const { ok, data } = await postJSON("/api/quotas", { service, minutes });
-    if (!ok) { alert(data.error || "Could not set that limit."); return; }
+    const { ok, data } = await postJSON("/api/quotas",
+      { service, minutes: limitMinutes.value });
+    if (!ok) { showLimitError(data.error || "Could not set that limit."); return; }
+    limitService.value = "";
     refreshLimits();
   });
-  container.appendChild(addLimit);
+  container.appendChild(limitForm);
 
   patterns.forEach(pattern => {
     const line = el("div", { class: "claimed-device" });
@@ -1743,15 +1805,22 @@ async function refreshLimits() {
     container.appendChild(line);
   });
 
-  const addBlock = el("button", { class: "btn", type: "button" }, "Block a site");
-  addBlock.addEventListener("click", async () => {
-    const pattern = prompt("Which site? For example tiktok.com");
+  const blockForm = el("form", { class: "inline-form" });
+  const blockField = el("input", { type: "text", placeholder: "Site, e.g. tiktok.com",
+                                   "aria-label": "Site to block" });
+  blockForm.appendChild(blockField);
+  blockForm.appendChild(el("button", { class: "btn", type: "submit" }, "Block site"));
+  blockForm.addEventListener("submit", async event => {
+    event.preventDefault();
+    const pattern = blockField.value.trim();
     if (!pattern) return;
     const { ok, data } = await postJSON("/api/blacklist", { pattern });
-    if (!ok) { alert(data.error || "Could not block that."); return; }
+    if (!ok) { showLimitError(data.error || "Could not block that."); return; }
+    blockField.value = "";
     refreshLimits();
   });
-  container.appendChild(addBlock);
+  container.appendChild(blockForm);
+  container.appendChild(el("div", { class: "limit-error", id: "limit-error" }));
 }
 
 
