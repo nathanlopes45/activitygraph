@@ -396,6 +396,35 @@ class HistoryStore:
             }
         return result
 
+    def service_seconds_today(self, macs, day: str | None = None) -> dict:
+        """Seconds spent per service today by this set of devices.
+
+        Intervals are unioned rather than summed, matching how time is
+        measured everywhere else: a group with a phone and a laptop both on
+        YouTube for the same hour has spent an hour of its allowance, not
+        two. Rows are already split at local midnight and carry local_day,
+        so "today" is the day the person lived rather than a UTC window.
+        """
+        wanted = {m.upper() for m in (macs or []) if m}
+        if not wanted:
+            return {}
+        day = day or (datetime.now(timezone.utc) + self.tz_offset).date().isoformat()
+
+        rows = self._conn.execute(
+            """SELECT service, device_mac, start_time, end_time
+                 FROM category_intervals
+                WHERE local_day = ? AND service IS NOT NULL AND service != ''""",
+            (day,),
+        )
+        by_service: dict[str, list] = {}
+        for service, mac, start, end in rows:
+            if (mac or "").upper() not in wanted:
+                continue
+            by_service.setdefault(service, []).append(
+                (datetime.fromisoformat(start), datetime.fromisoformat(end)))
+        return {service: union_seconds(intervals)
+                for service, intervals in by_service.items()}
+
     def session_count(self) -> int:
         return self._conn.execute("SELECT COUNT(*) FROM session_events").fetchone()[0]
 

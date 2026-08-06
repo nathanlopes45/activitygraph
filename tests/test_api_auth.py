@@ -638,3 +638,106 @@ def test_removing_an_entry_that_is_not_there_says_so(env):
 def test_a_blacklist_needs_a_sign_in(env):
     _, _, routes = env
     assert status(routes["get_blacklist"](FakeRequest())) == 401
+
+
+# ---------------- daily limits ----------------
+
+def test_a_user_sets_a_limit_in_minutes(env):
+    _, accounts, routes = env
+    sam = accounts.create_user("Sam", "password123")
+    routes["set_quota"](FakeRequest(token=issue_token(sam.id, SECRET)),
+                        {"service": "YouTube", "minutes": 60})
+    assert accounts.quotas_for(sam.id) == {"YouTube": 3600}
+
+
+def test_a_zero_limit_removes_it(env):
+    _, accounts, routes = env
+    sam = accounts.create_user("Sam", "password123")
+    accounts.set_quota(sam.id, "YouTube", 3600)
+    routes["set_quota"](FakeRequest(token=issue_token(sam.id, SECRET)),
+                        {"service": "YouTube", "minutes": 0})
+    assert accounts.quotas_for(sam.id) == {}
+
+
+def test_one_group_cannot_set_anothers_limit(env):
+    _, accounts, routes = env
+    sam = accounts.create_user("Sam", "password123")
+    bob = accounts.create_user("Bob", "password123")
+    result = routes["set_quota"](FakeRequest(token=issue_token(bob.id, SECRET)),
+                                 {"service": "YouTube", "minutes": 60, "user_id": sam.id})
+    assert status(result) == 403
+    assert accounts.quotas_for(sam.id) == {}
+
+
+def test_the_admin_sees_every_groups_limits(env):
+    _, accounts, routes = env
+    admin = accounts.authenticate("theadmin", "password123")
+    sam = accounts.create_user("Sam", "password123")
+    accounts.set_quota(sam.id, "YouTube", 3600)
+
+    data = body(routes["get_quotas"](FakeRequest(token=issue_token(admin.id, SECRET))))
+    sams = [g for g in data["groups"] if g["username"] == "Sam"][0]
+    assert sams["limits"][0]["service"] == "YouTube"
+    assert sams["limits"][0]["daily_seconds"] == 3600
+
+
+def test_a_limit_reports_whether_it_can_actually_be_enforced(env):
+    """A limit on something with no known front door is recorded but never
+    blocks, and saying so is better than a promise the tool will not keep."""
+    _, accounts, routes = env
+    sam = accounts.create_user("Sam", "password123")
+    accounts.set_quota(sam.id, "YouTube", 3600)
+    accounts.set_quota(sam.id, "Some Internal Tool", 600)
+
+    data = body(routes["get_quotas"](FakeRequest(token=issue_token(sam.id, SECRET))))
+    by_service = {row["service"]: row["enforceable"] for row in data["limits"]}
+    assert by_service == {"YouTube": True, "Some Internal Tool": False}
+
+
+def test_usage_is_unioned_across_a_groups_devices(tmp_path):
+    """A phone and a laptop both on YouTube for the same hour have spent an
+    hour of the group's allowance, not two."""
+    from datetime import datetime, timedelta, timezone
+
+    from activitygraph.storage import HistoryStore
+
+    store = HistoryStore(str(tmp_path / "h.db"))
+    day = (datetime.now(timezone.utc) + store.tz_offset).date().isoformat()
+    start = datetime.now(timezone.utc).replace(microsecond=0)
+
+    for ip, mac in (("192.168.50.50", "AA:BB:CC:00:00:01"),
+                    ("192.168.50.51", "AA:BB:CC:00:00:02")):
+        store._conn.execute(
+            """INSERT INTO category_intervals
+               (device_ip, device_mac, category, service, start_time, end_time,
+                local_day, recorded_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (ip, mac, "Entertainment", "YouTube",
+             start.isoformat(), (start + timedelta(minutes=30)).isoformat(),
+             day, start.isoformat()))
+    store._conn.commit()
+
+    used = store.service_seconds_today(["AA:BB:CC:00:00:01", "AA:BB:CC:00:00:02"])
+    assert used["YouTube"] == pytest.approx(1800, abs=2), "overlapping time counted twice"
+    store.close()
+
+
+def test_another_groups_devices_do_not_count_toward_a_limit(tmp_path):
+    from datetime import datetime, timedelta, timezone
+
+    from activitygraph.storage import HistoryStore
+
+    store = HistoryStore(str(tmp_path / "h.db"))
+    day = (datetime.now(timezone.utc) + store.tz_offset).date().isoformat()
+    start = datetime.now(timezone.utc).replace(microsecond=0)
+    store._conn.execute(
+        """INSERT INTO category_intervals
+           (device_ip, device_mac, category, service, start_time, end_time,
+            local_day, recorded_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        ("192.168.50.60", "BB:BB:BB:00:00:09", "Entertainment", "YouTube",
+         start.isoformat(), (start + timedelta(hours=3)).isoformat(), day, start.isoformat()))
+    store._conn.commit()
+
+    assert store.service_seconds_today(["AA:BB:CC:00:00:01"]) == {}
+    store.close()

@@ -315,6 +315,64 @@ def create_app(pipeline, live: bool = False, history_store=None, capture=None,
                                 status_code=404)
         return {"patterns": accounts.blocked_for(target)}
 
+    def _usage_today(user_id):
+        if history_store is None:
+            return {}
+        return history_store.service_seconds_today(accounts.macs_for_user(user_id))
+
+    @app.get("/api/quotas")
+    def get_quotas(request: Request):
+        """A group's limits and how much of each is spent today."""
+        user = current_user(request)
+        if user is None:
+            return JSONResponse({"error": "Not signed in."}, status_code=401)
+
+        from .enforcement import exhausted_services
+        from .service_rules import PRIMARY_DOMAINS
+
+        def describe(target_id, username, group_name):
+            limits = accounts.quotas_for(target_id)
+            used = _usage_today(target_id)
+            return {
+                "user_id": target_id, "username": username, "group": group_name,
+                "limits": [
+                    {"service": service,
+                     "daily_seconds": seconds,
+                     "used_seconds": int(used.get(service, 0)),
+                     # Said plainly, because a limit on something that cannot
+                     # be blocked is a promise the tool will not keep.
+                     "enforceable": service in PRIMARY_DOMAINS}
+                    for service, seconds in sorted(limits.items())
+                ],
+                "spent": exhausted_services(limits, used),
+            }
+
+        if user.is_admin:
+            return {"is_admin": True, "groups": [
+                describe(g["user_id"], g["username"], g["group"])
+                for g in accounts.blocked_by_group()
+            ]}
+        return {"is_admin": False, **describe(user.id, user.username, user.group_name)}
+
+    @app.post("/api/quotas")
+    def set_quota(request: Request, payload: dict = Body(...)):
+        user = current_user(request)
+        if user is None:
+            return JSONResponse({"error": "Not signed in."}, status_code=401)
+        target = _blacklist_target(user, payload)
+        if target is None:
+            return JSONResponse({"error": "You can only change your own limits."},
+                                status_code=403)
+        try:
+            minutes = float(payload.get("minutes", 0))
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "Give the limit in minutes."}, status_code=400)
+        try:
+            accounts.set_quota(target, payload.get("service", ""), int(minutes * 60))
+        except AccountError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return {"limits": accounts.quotas_for(target)}
+
     @app.get("/")
     def index():
         return FileResponse(WEBAPP_DIR / "index.html")
@@ -651,9 +709,24 @@ class BackgroundCapture:
             return
         from .enforcement import apply_ruleset, render_ruleset
 
+        from .enforcement import exhausted_services, quota_patterns
+
         addresses = {(d.mac or "").upper(): (d.addresses or [d.ip])
                      for d in self.pipeline.devices.all_devices()}
-        script = render_ruleset(self.accounts.blocked_by_group(), addresses,
+
+        groups = self.accounts.blocked_by_group()
+        limits = self.accounts.all_quotas()
+        for group in groups:
+            # A spent limit becomes ordinary block patterns, so both features
+            # share one path to the firewall rather than racing each other.
+            used = (self.history_store.service_seconds_today(group["device_macs"])
+                    if self.history_store is not None else {})
+            spent = exhausted_services(limits.get(group["user_id"], {}), used)
+            for pattern in quota_patterns(spent):
+                if pattern not in group["patterns"]:
+                    group["patterns"].append(pattern)
+
+        script = render_ruleset(groups, addresses,
                                 self.pipeline.services._dns_cache)
         if script == self._last_ruleset:
             return  # nothing changed; reloading would be pointless churn
