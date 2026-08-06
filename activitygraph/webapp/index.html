@@ -361,6 +361,75 @@
     color: var(--text-muted);
   }
 
+  /* ---------------- collapsible sections ---------------- */
+
+  /* A <details>/<summary> pair rather than a scripted toggle: the browser
+     handles open/closed state, keyboard access and the disclosure marker,
+     and the content is still in the DOM for anyone who wants to find it. */
+  .fold {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: 18px;
+  }
+  .fold > summary {
+    cursor: pointer;
+    padding: 14px 18px;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    user-select: none;
+  }
+  .fold > summary::-webkit-details-marker { display: none; }
+  .fold > summary:hover { color: var(--text-primary); }
+  .fold > summary::before {
+    content: "+";
+    font-size: 13px;
+    color: var(--accent);
+    width: 10px;
+  }
+  .fold[open] > summary::before { content: "\2212"; }
+  .fold[open] > summary {
+    border-bottom: 1px solid var(--border-soft);
+    color: var(--text-primary);
+  }
+  .fold .fold-body { padding: 16px 18px 18px; }
+  .fold .fold-note {
+    margin-left: auto;
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--text-muted);
+    font-size: 10px;
+  }
+  .fold .panel { background: none; border: 0; padding: 0; margin-bottom: 22px; }
+  .fold .panel:last-child { margin-bottom: 0; }
+
+  /* ---------------- this device ---------------- */
+
+  .this-device-head {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 4px;
+  }
+  .this-device-name {
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  .this-device-sub {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
   /* ---------------- filters ---------------- */
 
   .filter-bar { margin-bottom: 18px; }
@@ -601,25 +670,33 @@
   <div id="capture-warning" class="capture-warning" hidden></div>
 
   <!-- Populated from the summary's filter_options, which the server lists
-       before applying the filter, so the controls do not empty themselves. -->
-  <section class="panel filter-bar" id="filter-bar" hidden>
+       before applying the filter, so the controls do not empty themselves.
+       Closed by default: it is a tool you reach for, not something to read. -->
+  <details class="fold" id="filter-bar" hidden>
+    <summary>Filter<span class="fold-note" id="filter-summary"></span></summary>
+    <div class="fold-body">
+      <div class="filter-row">
+        <span class="filter-label">Devices</span>
+        <div id="filter-devices" class="filter-row" style="padding:0;border:0;"></div>
+      </div>
+      <div class="filter-row">
+        <span class="filter-label">Services</span>
+        <div id="filter-services" class="filter-row" style="padding:0;border:0;"></div>
+      </div>
+    </div>
+  </details>
+
+  <section class="panel" id="this-device-panel" hidden>
     <div class="panel-head">
-      <span class="panel-title">Filter</span>
-      <span class="panel-note" id="filter-summary"></span>
+      <span class="panel-title">This Device</span>
+      <span class="panel-note" id="this-device-note"></span>
     </div>
-    <div class="filter-row">
-      <span class="filter-label">Devices</span>
-      <div id="filter-devices" class="filter-row" style="padding:0;border:0;"></div>
-    </div>
-    <div class="filter-row">
-      <span class="filter-label">Services</span>
-      <div id="filter-services" class="filter-row" style="padding:0;border:0;"></div>
-    </div>
+    <div id="this-device"></div>
   </section>
 
   <section class="panel" id="my-devices-panel" hidden>
     <div class="panel-head">
-      <span class="panel-title">My Devices</span>
+      <span class="panel-title">My Group</span>
       <span class="panel-note" id="my-devices-note"></span>
     </div>
     <div id="my-devices"></div>
@@ -686,6 +763,12 @@
     </section>
   </div>
 
+  <!-- The raw material behind everything above. Interesting when something
+       looks wrong, noise the rest of the time, so it is closed by default. -->
+  <details class="fold" id="nerd-stats">
+    <summary>Stats for Nerds<span class="fold-note" id="nerd-note"></span></summary>
+    <div class="fold-body">
+
   <section class="panel">
     <div class="panel-head">
       <span class="panel-title">Sessions</span>
@@ -712,6 +795,9 @@
       </table>
     </div>
   </section>
+
+    </div>
+  </details>
 
   <section class="panel">
     <div class="panel-head">
@@ -1337,6 +1423,8 @@ async function refresh() {
     renderDevices(data);
     renderSessions(data);
     renderFlows(data);
+    document.getElementById("nerd-note").textContent =
+      (data.sessions || []).length + " sessions, " + (data.flows || []).length + " flows";
 
     if (data.mode === "live") setTimeout(refresh, 5000);
   } catch (err) {
@@ -1425,8 +1513,9 @@ async function loadAuthState() {
   renderAuthMode();
   renderAccountChip();
 
-  document.getElementById("my-devices-panel").hidden = !authState.accounts_enabled
-    || !authState.authenticated;
+  const signedIn = authState.accounts_enabled && authState.authenticated;
+  document.getElementById("my-devices-panel").hidden = !signedIn;
+  document.getElementById("this-device-panel").hidden = !signedIn;
   if (authState.accounts_enabled && authState.authenticated) refreshMyDevices();
 }
 
@@ -1466,6 +1555,52 @@ async function submitAuth(event) {
   window.location.reload();
 }
 
+function renderThisDevice(data, here) {
+  // Its own panel because it answers a different question from the group:
+  // not "what am I tracking" but "what is this thing I am holding, and does
+  // the dashboard know it is mine".
+  const panel = document.getElementById("this-device-panel");
+  const container = document.getElementById("this-device");
+  const note = document.getElementById("this-device-note");
+  panel.hidden = false;
+  container.innerHTML = "";
+
+  const head = el("div", { class: "this-device-head" });
+  head.appendChild(el("div", { class: "this-device-name" },
+    here.name || (here.recognised ? "Unnamed device" : "Not recognised yet")));
+  container.appendChild(head);
+
+  if (!here.recognised) {
+    note.textContent = "unknown";
+    container.appendChild(el("div", { class: "this-device-sub" },
+      "It needs to send some traffic through the gateway before it appears here."));
+    return;
+  }
+
+  container.appendChild(el("div", { class: "this-device-sub" },
+    [here.mac, here.ip].filter(Boolean).join("   ")));
+
+  if (data.can_claim === false) {
+    note.textContent = "admin";
+  } else if (here.claimed_by_you) {
+    note.textContent = "in your group";
+  } else {
+    note.textContent = "not yours yet";
+    const claim = el("button", { class: "btn", type: "button" }, "Claim this device");
+    claim.addEventListener("click", async () => {
+      const { ok, data: result } = await postJSON("/api/claim");
+      if (!ok) { alert(result.error || "Could not claim this device."); return; }
+      refreshMyDevices();
+      refresh();
+    });
+    const row = el("div", { class: "claimed-device" });
+    row.appendChild(el("div", {}, "Add it to your group so its activity is yours."));
+    row.appendChild(claim);
+    container.appendChild(row);
+  }
+}
+
+
 async function refreshMyDevices() {
   const container = document.getElementById("my-devices");
   const note = document.getElementById("my-devices-note");
@@ -1487,46 +1622,19 @@ async function refreshMyDevices() {
     ? devices.length + (devices.length === 1 ? " device" : " devices")
     : "none yet";
 
-  // An admin sees everything already, so there is nothing to claim, and
-  // claiming would take a device away from whoever it belongs to. Any
-  // claims made before that rule existed are still listed below, so they
-  // can be handed back.
+  renderThisDevice(data, here);
+
+  // Claiming lives in the This Device panel above, since it only ever
+  // applies to the device you are holding. This one is just the group.
   if (data.can_claim === false) {
     note.textContent = devices.length ? devices.length + " to release" : "admin";
     container.appendChild(el("div", { class: "empty-state" },
       "You see every device on the network. Claiming is for personal accounts, "
       + "which start empty and build up a group."));
-  } else if (!here.claimed_by_you) {
-    // The rule the model rests on: a device can only be added from itself,
-    // so this button is the only way in and it has to be explained.
-    const row = el("div", { class: "claimed-device" });
-    const left = el("div", {});
-    if (here.recognised) {
-      left.appendChild(el("div", { class: "cd-name" },
-        "This device" + (here.name ? ": " + here.name : "")));
-      left.appendChild(el("div", { class: "cd-meta" }, here.mac || ""));
-    } else {
-      left.appendChild(el("div", { class: "cd-name" }, "This device is not recognised yet"));
-      left.appendChild(el("div", { class: "cd-meta" },
-        "it needs to send some traffic through the gateway first"));
-    }
-    row.appendChild(left);
-
-    if (here.recognised) {
-      const claim = el("button", { class: "btn", type: "button" }, "Claim this device");
-      claim.addEventListener("click", async () => {
-        const { ok, data: result } = await postJSON("/api/claim");
-        if (!ok) { alert(result.error || "Could not claim this device."); return; }
-        refreshMyDevices();
-        refresh();
-      });
-      row.appendChild(claim);
-    }
-    container.appendChild(row);
-  }
-
-  if (!devices.length && here.claimed_by_you) {
-    container.appendChild(el("div", { class: "empty-state" }, "No devices claimed yet."));
+  } else if (!devices.length) {
+    container.appendChild(el("div", { class: "empty-state" },
+      "No devices yet. Open this dashboard on each device you want to add, "
+      + "and claim it there."));
   }
 
   devices.forEach(device => {
