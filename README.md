@@ -1,17 +1,24 @@
-# ActivityGraph -- Backend Core
+# ActivityGraph
 
 > Understand your digital life.
 
-This is the **first working slice** of ActivityGraph: the local pipeline that
-turns raw network traffic into identified devices and service-tagged flows.
+ActivityGraph turns the traffic on your own network into an answer to a
+question most tools cannot answer: where did the time go, per person, across
+every device they own.
 
 ```
-Network → Traffic Collector → Flow Processor → Service Detection → Devices/Flows
+Network → Traffic Collector → Flow Processor → Service Detection → Dashboard
 ```
 
-The AI Classification (local LLM), Activity Graph (session grouping), and
-Dashboard stages from the full architecture build on top of what's here --
-see [Roadmap](#roadmap).
+It runs entirely on hardware you control, most usefully on a Raspberry Pi
+acting as your network's gateway, where every device's traffic passes through
+it. Nothing leaves the machine.
+
+<!-- Replace with a screenshot of the dashboard. -->
+![The ActivityGraph dashboard](docs/images/dashboard.png)
+
+<!-- Replace with a photo or diagram of the gateway setup. -->
+![The Raspberry Pi gateway](docs/images/gateway.png)
 
 ## What it does
 
@@ -104,8 +111,16 @@ see [Roadmap](#roadmap).
   no build step) showing the activity graph as an actual node-link diagram
   (device → session → service), ranked Top Devices/Top Services panels, a
   category breakdown, devices, sessions, top flows, and a history panel.
-  Binds to `127.0.0.1` by default; there's no login because the threat
-  model is "my own browser," not "the internet."
+  Binds to `127.0.0.1` by default. With `--accounts` it becomes multi-user:
+  people sign in, claim their own devices, and see only those, while an
+  admin sees everything.
+- **Groups, limits and blocking** (`accounts.py`, `enforcement.py`): each
+  group can block a service outright or give itself a daily allowance for
+  one. With `--enforce-blacklist` the gateway drops that group's traffic to
+  those destinations, in an nftables table of its own and failing open if
+  anything goes wrong. A block covers a whole service, app included; a daily
+  limit covers only its front door, so an embedded video keeps playing when
+  the hour is up.
 - **History** (`storage.py`): a local SQLite file tracking category totals
   across sessions, powering the dashboard's "last 30 days" trend chart and
   "today vs. your average" comparison -- the start of the "digital wellbeing
