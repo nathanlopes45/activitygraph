@@ -66,6 +66,14 @@ def normalise_blocked_pattern(pattern: str) -> str:
     if not text:
         return ""
 
+    # Already in stored form, which is what removing an entry passes back.
+    # Normalising it again destroyed it: the port-stripping below turns
+    # "service:YouTube" into "service", which has no dot and is rejected as
+    # not a domain, so the delete matched nothing and unblocking silently
+    # did nothing at all.
+    if text.lower().startswith(SERVICE_PREFIX):
+        return SERVICE_PREFIX + text[len(SERVICE_PREFIX):].strip()
+
     from .service_rules import PRIMARY_DOMAINS
 
     for service in PRIMARY_DOMAINS:

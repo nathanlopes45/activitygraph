@@ -746,3 +746,54 @@ def test_another_groups_devices_do_not_count_toward_a_limit(tmp_path):
 
     assert store.service_seconds_today(["AA:BB:CC:00:00:01"]) == {}
     store.close()
+
+
+def test_unblocking_a_service_actually_removes_it(env):
+    """The reported bug. Entries are stored as "service:YouTube", and
+    removing one passed that back through the normaliser, whose
+    port-stripping turned it into "service": no dot, rejected as not a
+    domain, so the delete matched nothing and the button did nothing."""
+    _, accounts, routes = env
+    sam = accounts.create_user("Sam", "password123")
+    token = issue_token(sam.id, SECRET)
+
+    routes["add_blacklist"](FakeRequest(token=token), {"pattern": "YouTube"})
+    stored = accounts.blocked_for(sam.id)
+    assert stored == ["service:YouTube"]
+
+    result = routes["remove_blacklist"](FakeRequest(token=token), {"pattern": stored[0]})
+    assert status(result) == 200
+    assert accounts.blocked_for(sam.id) == []
+
+
+def test_unblocking_a_plain_domain_still_works(env):
+    _, accounts, routes = env
+    sam = accounts.create_user("Sam", "password123")
+    token = issue_token(sam.id, SECRET)
+
+    routes["add_blacklist"](FakeRequest(token=token), {"pattern": "example.invalid"})
+    routes["remove_blacklist"](FakeRequest(token=token), {"pattern": "example.invalid"})
+    assert accounts.blocked_for(sam.id) == []
+
+
+def test_the_admin_can_unblock_another_groups_entry(env):
+    """The admin panel offers the same control, so it has to work there too."""
+    _, accounts, routes = env
+    admin = accounts.authenticate("theadmin", "password123")
+    sam = accounts.create_user("Sam", "password123")
+    accounts.add_blocked(sam.id, "TikTok")
+
+    routes["remove_blacklist"](FakeRequest(token=issue_token(admin.id, SECRET)),
+                               {"pattern": "service:TikTok", "user_id": sam.id})
+    assert accounts.blocked_for(sam.id) == []
+
+
+def test_what_is_stored_can_always_be_removed(env):
+    """Anything add stores, remove must find. The two went out of step
+    because only one of them normalised."""
+    from activitygraph.accounts import normalise_blocked_pattern
+
+    for typed in ["YouTube", "youtube.com", "https://www.tiktok.com/x", "example.invalid"]:
+        stored = normalise_blocked_pattern(typed)
+        assert normalise_blocked_pattern(stored) == stored, \
+            f"{typed!r} stored as {stored!r} but re-normalises to something else"
