@@ -21,11 +21,9 @@ IP -> MAC mapping that restores grouping in those cases.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from .models import Packet
 
 # Where dnsmasq keeps leases on Debian/Raspberry Pi OS.
 DEFAULT_LEASE_PATHS = (
@@ -89,27 +87,26 @@ def load_leases(path: Optional[str] = None) -> list[Lease]:
 
 
 def ingest_leases(pipeline, path: Optional[str] = None, announce: bool = True) -> int:
-    """Register every leased device with the pipeline.
+    """Learn a name for every leased device. Returns the number of leases read.
 
-    Feeds each lease through the same synthetic-ARP path as
-    router_client.ingest_router_devices, so leases flow through the normal
-    device-registration logic (vendor lookup, aliases, grouping) rather than
-    needing a parallel code path. Returns the number of devices registered.
+    Names only, deliberately. A lease records an address handed out, and
+    dnsmasq keeps it for hours after the device disconnects, so treating each
+    one as a sighting shows devices that left this morning as present. The
+    name is held against the MAC and attaches the moment that device sends
+    something, which is also when grouping and vendor lookup apply.
 
-    Safe to call repeatedly: re-registering a known device just refreshes its
-    last-seen time, so a long-running gateway can re-read the file on a timer
-    and pick up devices that joined after startup.
+    Safe to call repeatedly, so a long-running gateway can re-read the file
+    on a timer and pick up names for devices that joined after startup.
     """
     leases = load_leases(path)
-    now = datetime.now(timezone.utc)
     for lease in leases:
-        pipeline.ingest(Packet(
-            timestamp=now, src_ip=lease.ip, dst_ip=lease.ip, proto="ARP", length=0,
-            src_mac=lease.mac, arp_sender_ip=lease.ip, arp_sender_mac=lease.mac,
-            hostname_hint=lease.hostname,
-            hostname_source="lease",
-        ))
+        # Names only. A lease is a record of an address handed out, which
+        # outlives the connection by hours, so registering each one as a
+        # device would show phones that left this morning as present. The
+        # name waits and attaches the moment the device sends something.
+        pipeline.devices.remember_name(lease.mac, lease.hostname, source="lease")
     if announce and leases:
         named = sum(1 for lease in leases if lease.hostname)
-        print(f"[activitygraph] DHCP leases: {len(leases)} device(s), {named} with a hostname.")
+        print(f"[activitygraph] DHCP leases: {named} name(s) learned from {len(leases)} lease(s). "
+              "Devices appear once they send traffic.")
     return len(leases)

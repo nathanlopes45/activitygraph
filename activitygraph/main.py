@@ -15,7 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .activity_graph import Session, group_into_sessions
@@ -77,7 +77,8 @@ class Pipeline:
             local_ips = _all_addresses(self.devices.all_devices())
         return group_into_sessions(self.flows.all_flows(), local_ips, session_gap_seconds=self.session_gap_seconds)
 
-    def summary(self, visible_macs=None, only_macs=None, only_services=None) -> dict:
+    def summary(self, visible_macs=None, only_macs=None, only_services=None,
+                active_within_seconds=None) -> dict:
         """Everything the dashboard renders.
 
         `visible_macs` limits the result to devices with those MAC addresses,
@@ -95,6 +96,16 @@ class Pipeline:
         """
         devices = self.devices.all_devices()
         flows = self.flows.all_flows()
+
+        # Applied before anything else, so every figure below describes the
+        # same window. A gateway runs for weeks, and without this the
+        # dashboard accumulates every device and service ever seen, which
+        # buries what is happening now under what happened on Tuesday. The
+        # long view lives in --history-db, which this does not touch.
+        if active_within_seconds:
+            cutoff = datetime.now(timezone.utc) - timedelta(seconds=active_within_seconds)
+            flows = [f for f in flows if f.end_time >= cutoff]
+            devices = [d for d in devices if d.last_seen >= cutoff]
 
         # Restricting the *inputs* rather than filtering the finished payload
         # is what makes per-user scoping safe. Every figure below is derived
@@ -425,6 +436,12 @@ def main() -> None:
                               "{\"brand\": \"tplink\", \"host\": \"192.168.1.1\", \"username\": \"admin\", "
                               "\"password\": \"...\"}. Kept in its own file (not a CLI argument) so the "
                               "password never lands in shell history. Currently supported brands: tplink.")
+    parser.add_argument("--active-within", type=float, default=None, metavar="MINUTES",
+                         help="Show only what has been active in the last MINUTES. A gateway "
+                              "runs for weeks, and without this the dashboard accumulates "
+                              "every device, session and service ever seen, burying what is "
+                              "happening now. Affects the live view only: --history-db keeps "
+                              "the long-term record either way. Try 15.")
     parser.add_argument("--exclude-self", action="store_true",
                          help="Leave this machine out of the device list. On a gateway the "
                               "capturing machine forwards everyone's traffic but is nobody's "
@@ -459,6 +476,7 @@ def main() -> None:
     from .collector import CAPTURE_MODES, validate_bpf_filter
 
     capture_filter = args.bpf_filter or CAPTURE_MODES[args.capture_mode]
+    active_window = args.active_within * 60 if args.active_within else None
     excluded_macs = set()
     if args.exclude_self:
         from .collector import local_hardware_addresses
@@ -521,7 +539,7 @@ def main() -> None:
             if history_store is not None:
                 history_store.record_sessions_from_summary(pipeline.summary())
                 history_store.record_time_from_pipeline(pipeline)
-            serve(pipeline, live=False, host=args.host, port=args.port, open_browser=not args.no_browser, history_store=history_store, accounts=accounts, secret=secret)
+            serve(pipeline, live=False, host=args.host, port=args.port, open_browser=not args.no_browser, history_store=history_store, accounts=accounts, secret=secret, active_within_seconds=active_window)
         else:
             # The history database doubles as the learned IP -> hostname
             # store, so a restarted gateway keeps recognising services it
@@ -537,7 +555,7 @@ def main() -> None:
             except PermissionError:
                 print("Live capture requires elevated privileges (try running with sudo).", file=sys.stderr)
                 sys.exit(1)
-            serve(pipeline, live=True, host=args.host, port=args.port, open_browser=not args.no_browser, history_store=history_store, capture=capture, accounts=accounts, secret=secret)
+            serve(pipeline, live=True, host=args.host, port=args.port, open_browser=not args.no_browser, history_store=history_store, capture=capture, accounts=accounts, secret=secret, active_within_seconds=active_window)
         return
     else:
         parser.error("no mode selected")

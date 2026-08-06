@@ -608,8 +608,16 @@ sudo .venv/bin/python -m activitygraph.main \
   the bulk of the packets. Categories and time stay accurate; byte totals
   become an undercount. If you want exact bytes and can accept the
   throughput cost, use `--capture-mode full`.
-- `--dhcp-leases` names and registers every device from the lease table. With
-  no value it probes the usual dnsmasq locations; pass a path to override.
+- `--dhcp-leases` learns a name for every device in the lease table. With no
+  value it probes the usual dnsmasq locations; pass a path to override. It
+  learns names only: a lease records an address handed out and outlives the
+  connection by hours, so a device appears once it sends traffic, wearing
+  the name the lease taught.
+- `--active-within 15` shows only what has been active in the last fifteen
+  minutes. A gateway runs for weeks, and without it the dashboard fills up
+  with every device, session and service ever seen. This affects the live
+  view only; `--history-db` keeps the long-term record either way, so the
+  History panel and day-over-day totals are unchanged.
 - `--host 0.0.0.0` is needed to reach the dashboard from another machine. It
   also publishes it to everyone on the LAN, which is why `--accounts` is on
   the line above. Without accounts the dashboard is unauthenticated and
@@ -687,7 +695,7 @@ Wants=network-online.target
 Type=simple
 User=root
 WorkingDirectory=$AG
-ExecStart=$AG/.venv/bin/python -m activitygraph.main --serve --serve-source live -i eth1 --host 0.0.0.0 --no-browser --capture-mode light --exclude-self --accounts $AG/accounts.db --dhcp-leases --history-db $AG/history.db
+ExecStart=$AG/.venv/bin/python -m activitygraph.main --serve --serve-source live -i eth1 --host 0.0.0.0 --no-browser --capture-mode light --exclude-self --active-within 15 --accounts $AG/accounts.db --dhcp-leases --history-db $AG/history.db
 Restart=always
 RestartSec=10
 
@@ -725,7 +733,7 @@ User=root
 WorkingDirectory=/opt/activitygraph
 ExecStart=/opt/activitygraph/.venv/bin/python -m activitygraph.main \
   --serve --serve-source live -i eth1 --host 0.0.0.0 --no-browser \
-  --capture-mode light --exclude-self \n  --accounts /opt/activitygraph/accounts.db \
+  --capture-mode light --exclude-self --active-within 15 \n  --accounts /opt/activitygraph/accounts.db \
   --dhcp-leases --history-db /opt/activitygraph/history.db
 Restart=always
 RestartSec=10

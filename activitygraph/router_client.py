@@ -25,11 +25,9 @@ import json
 import os
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Protocol
 
-from .models import Packet
 
 
 @dataclass
@@ -170,11 +168,11 @@ def ingest_router_devices(pipeline, credentials_path: str) -> None:
             except Exception:
                 pass
 
-    now = datetime.now(timezone.utc)
     for device in devices:
-        pipeline.ingest(Packet(
-            timestamp=now, src_ip=device.ip, dst_ip=device.ip, proto="ARP", length=0,
-            src_mac=device.mac, arp_sender_ip=device.ip, arp_sender_mac=device.mac,
-            hostname_hint=device.hostname,
-        ))
-    print(f"[activitygraph] Router reported {len(devices)} device(s).")
+        # Names only, for the same reason as the DHCP lease table this reads
+        # from: a router's client list includes devices that are not
+        # currently connected, so treating each as a sighting would show
+        # them as present. They appear once they send traffic.
+        pipeline.devices.remember_name(device.mac, device.hostname, source="lease")
+    print(f"[activitygraph] Router reported {len(devices)} device(s); "
+          "names learned. Devices appear once they send traffic.")

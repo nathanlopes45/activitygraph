@@ -99,3 +99,12 @@ def test_an_invalid_capture_filter_is_rejected_before_anything_starts(tmp_path):
     inside a capture thread once the dashboard is already serving."""
     with pytest.raises(AssertionError, match="exited 2"):
         run_cli(BASE_SERVE + ["--bpf-filter", "this is not bpf"], tmp_path)
+
+
+def test_serve_live_with_a_freshness_window_constructs(tmp_path):
+    run_cli(BASE_SERVE + ["--active-within", "15"], tmp_path)
+
+
+def test_serve_demo_with_a_freshness_window_constructs(tmp_path):
+    run_cli(["--serve", "--serve-source", "demo", "--no-browser", "--active-within", "15"],
+            tmp_path)

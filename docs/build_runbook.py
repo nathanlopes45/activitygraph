@@ -692,8 +692,15 @@ table([
      "The LAN side. <b>Never eth0.</b> ActivityGraph warns at startup if the "
      "interface you pass carries the default route."],
     ["<font face='Courier'>--dhcp-leases</font>",
-     "Names and registers every device from the Pi's own lease table. Works "
-     "with any router, needs no credentials."],
+     "Learns a name for every device in the Pi's own lease table. Works with "
+     "any router, needs no credentials. Names only: a lease records an address "
+     "handed out and outlives the connection by hours, so a device appears "
+     "once it sends traffic, wearing the name the lease taught."],
+    ["<font face='Courier'>--active-within 15</font>",
+     "Shows only what has been active in the last fifteen minutes. A gateway "
+     "runs for weeks, and without it the dashboard fills with every device, "
+     "session and service ever seen. Live view only: --history-db keeps the "
+     "long-term record either way."],
     ["<font face='Courier'>--host 0.0.0.0</font>",
      "Needed to reach the dashboard from another machine. It also publishes "
      "it to the whole LAN, which is why the flag below is on the same line."],
@@ -804,7 +811,7 @@ Wants=network-online.target
 Type=simple
 User=root
 WorkingDirectory=$AG
-ExecStart=$AG/.venv/bin/python -m activitygraph.main --serve --serve-source live -i eth1 --host 0.0.0.0 --no-browser --capture-mode light --exclude-self --accounts $AG/accounts.db --dhcp-leases --history-db $AG/history.db
+ExecStart=$AG/.venv/bin/python -m activitygraph.main --serve --serve-source live -i eth1 --host 0.0.0.0 --no-browser --capture-mode light --exclude-self --active-within 15 --accounts $AG/accounts.db --dhcp-leases --history-db $AG/history.db
 Restart=always
 RestartSec=10
 
