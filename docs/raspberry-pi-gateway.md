@@ -654,7 +654,15 @@ network-wide view.
 
 After that, each person registers their own account and starts out seeing
 nothing. They add a device by opening the dashboard **on that device** and
-pressing "Claim this device" in the My Devices panel. Claiming is checked
+pressing "Claim this device", which asks them what to call it.
+
+That name is the one everybody sees, prefixed with whose it is: Sam
+calling his phone "iPhone" appears as **Sam's iPhone**, and his group is
+**Sam's group**. Usernames are unique, so two people cannot produce the
+same label. This is deliberately asked for rather than guessed: what a
+device broadcasts about itself varies by make, by OS version and by
+whether it is awake, and phones in particular announce a bare model name.
+Its owner always knows what it is. Claiming is checked
 against the connection's own source address, so a phone can only be added
 from the phone. That is what makes the whole thing safe to hand out: nobody
 can attach a device they are not holding, and nobody has to be told anyone

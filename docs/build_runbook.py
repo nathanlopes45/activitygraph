@@ -748,7 +748,16 @@ callout("Whoever registers first becomes the admin",
 
 p("Everyone else then registers their own account and starts out seeing "
   "nothing at all. They add a device by opening the dashboard <b>on that "
-  "device</b> and pressing <b>Claim this device</b> in the My Devices panel.")
+  "device</b> and pressing <b>Claim this device</b>, which asks them what "
+  "to call it.")
+
+p("That name is the one everybody sees, prefixed with whose it is: Sam "
+  "calling his phone \"iPhone\" appears as <b>Sam's iPhone</b>, and his "
+  "group is <b>Sam's group</b>. Usernames are unique, so two people cannot "
+  "produce the same label. This is asked for rather than guessed because "
+  "what a device broadcasts about itself varies by make, by OS version and "
+  "by whether it is awake, and phones in particular announce a bare model "
+  "name. Its owner always knows what it is.")
 
 p("Claiming is checked against the connection's own source address, so a "
   "phone can only be added from the phone. That is what makes the dashboard "
