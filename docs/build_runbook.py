@@ -721,12 +721,11 @@ table([
      "Requires people to sign in, and shows each of them only the devices "
      "they have claimed. Without it the dashboard is unauthenticated and "
      "anyone who can reach the port can read every device's history."],
-    ["<font face='Courier'>--exclude-self</font>",
-     "Keeps the Pi out of the device list. It forwards everyone's traffic but "
-     "is nobody's device, and otherwise appears more than once: under its LAN "
-     "address, and again under its upstream address, which it answers on when "
-     "you open the dashboard by that address from the LAN side. Leave it off "
-     "on a laptop capturing its own traffic."],
+    ["<font face='Courier'>--enforce-blacklist</font>",
+     "What makes blocking and daily limits actually drop packets. <b>Without "
+     "it the lists are recorded and nothing is blocked</b>, which looks "
+     "exactly like the feature being broken. The dashboard says plainly when "
+     "it is missing. See Phase 9.1."],
     ["<font face='Courier'>--capture-mode light</font>",
      "Close to mandatory on a Pi. Every packet the capture filter admits is "
      "copied into Python and taken apart by scapy, which costs far more per "
@@ -748,6 +747,11 @@ p("Open <font face='Courier'>http://192.168.50.1:8420</font> from any device "
   "Went</b> and <b>Time by Person</b>.")
 
 h3("9.1  Blocking and daily limits")
+
+p("The Pi keeps itself out of the device list automatically: capturing an "
+  "interface that does not carry the default route is what makes a machine "
+  "a gateway rather than a laptop watching its own traffic, so no flag is "
+  "needed. Pass <font face='Courier'>--include-self</font> to list it.")
 
 p("Each group can block sites outright, and can give itself a daily "
   "allowance for a service. Both are managed from the dashboard's <b>Daily "
@@ -777,7 +781,11 @@ p("A daily limit blocks only a service's front door. Over HTTPS the hostname "
 
 p("Blocking a domain covers its subdomains but not its siblings: blocking "
   "tiktok.com does not block tiktokcdn.com, which is a separate domain. Add "
-  "it as well if you want the app fully unreachable. A device with a cached "
+  "it as well if you want the app fully unreachable. This matters most for "
+  "phone apps: the YouTube app streams from googlevideo.com, which a daily "
+  "limit deliberately leaves alone so videos embedded in other pages keep "
+  "working, so block it alongside youtube.com if you want the app itself "
+  "unreachable rather than just the website. A device with a cached "
   "DNS answer can also reach the address until that cache expires, so a block "
   "is firm within about a minute rather than instantly.")
 
@@ -867,7 +875,7 @@ Wants=network-online.target
 Type=simple
 User=root
 WorkingDirectory=$AG
-ExecStart=$AG/.venv/bin/python -m activitygraph.main --serve --serve-source live -i eth1 --host 0.0.0.0 --no-browser --capture-mode light --exclude-self --active-within 15 --accounts $AG/accounts.db --dhcp-leases --history-db $AG/history.db
+ExecStart=$AG/.venv/bin/python -m activitygraph.main --serve --serve-source live -i eth1 --host 0.0.0.0 --no-browser --capture-mode light --active-within 15 --enforce-blacklist --accounts $AG/accounts.db --dhcp-leases --history-db $AG/history.db
 Restart=always
 RestartSec=10
 
