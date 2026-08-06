@@ -801,6 +801,8 @@ If the phone shows 0m, work through these in order:
 | Lots of traffic filed as plain "HTTPS" | Services are identified from DNS, which the Pi only sees once devices start querying it. It fills in over the first few minutes, and `--history-db` keeps it across reboots |
 | Everyone logged out after a reboot | The session key moved or was deleted. With `--accounts PATH` it lives beside that path |
 | No IPv6 anywhere | Expected. The LAN is single-stack by design; see step 4 |
+| A phone shows as "iPhone" rather than its real name | iOS sends a generic hostname over DHCP, so the chosen name comes from Bonjour instead. That needs mDNS (UDP 5353) reaching the Pi, which `--capture-mode light` allows. Check Settings > General > About > Name, or override with `--device-aliases` |
+| Time in categories looks too low | Flows are kept alive by a sampled fraction of packets in light mode. If durations still look short, raise `--idle-timeout` |
 
 ### Wi-Fi appears, but devices get no internet
 

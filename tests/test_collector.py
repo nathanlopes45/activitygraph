@@ -383,3 +383,47 @@ def test_light_mode_still_drops_the_http_response_body():
     body = (_frame() / IP(src=WAN, dst=LAN) / TCP(sport=80, dport=5000, flags="A")
             / Raw(b"x" * 1400))
     assert not matches(LIGHT_FILTER, Ether(bytes(body)))
+
+
+# ---------------- the name a phone actually broadcasts ----------------
+
+# iOS sends a generic "iPhone" in its DHCP hostname, so Bonjour is the only
+# place the name its owner chose appears. It publishes that name as the
+# leading label of each service instance it advertises, and advertises those
+# constantly while publishing a plain host record rarely.
+
+def _mdns(*rrnames):
+    from scapy.all import DNS, DNSRR
+
+    from activitygraph.collector import _mdns_local_name
+
+    records = [DNSRR(rrname=n, type="TXT", rdata="x") for n in rrnames]
+    return _mdns_local_name(DNS(bytes(DNS(qr=1, an=records))))
+
+
+@pytest.mark.parametrize("rrname", [
+    "Nathans-iPhone.local",
+    "Nathans iPhone._companion-link._tcp.local",
+    "Nathans iPhone._rdlink._tcp.local",
+    "Nathans iPhone._airplay._tcp.local",
+])
+def test_the_owners_name_is_read_from_whichever_record_carries_it(rrname):
+    """Discarding every name containing "_tcp" threw away the service
+    instances too, which on a phone is often the only form announced."""
+    assert _mdns(rrname) == "Nathans iPhone"
+
+
+@pytest.mark.parametrize("rrname", [
+    "_companion-link._tcp.local",
+    "_airplay._tcp.local",
+    "_raop._udp.local",
+])
+def test_a_service_that_names_no_device_is_still_refused(rrname):
+    """These name the protocol, not whoever speaks it. The leading
+    underscore is what tells them apart."""
+    assert _mdns(rrname) is None
+
+
+def test_the_host_record_wins_when_both_are_present():
+    """Both carry the name; the host record is the canonical one."""
+    assert _mdns("Nathans iPhone._rdlink._tcp.local", "Nathans-iPhone.local") == "Nathans iPhone"
