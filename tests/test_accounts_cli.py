@@ -182,3 +182,25 @@ def test_the_device_list_keeps_departed_devices(page):
     devices = page.split("function renderDevices(")[1].split("\n}")[0]
     assert "offline" in devices
     assert ".filter(" not in devices, "the device list must not drop anyone"
+
+
+# ---------------- no browser dialogs ----------------
+
+def test_adding_a_limit_or_a_block_uses_real_fields(page):
+    """prompt() fires a dialog, and two in a row make the browser offer to
+    suppress further ones. Once someone accepts that, every later prompt
+    returns nothing and the feature silently stops working with no
+    indication why. That was reported as a mysterious "Suppress Alerts"
+    button."""
+    limits = page.split("async function refreshLimits(")[1].split("\nasync function")[0]
+    code = [line for line in limits.splitlines() if not line.strip().startswith("//")]
+    assert not any("prompt(" in line for line in code), \
+        "a dialog here can be suppressed by the browser"
+    assert 'el("form", { class: "inline-form" })' in limits
+
+
+def test_the_panel_says_when_nothing_is_being_blocked(page):
+    """A list of blocked sites that is not being enforced is worse than no
+    list: it reads as protection that is not there."""
+    assert "blocked.enforcing === false" in page
+    assert "--enforce-blacklist" in page
