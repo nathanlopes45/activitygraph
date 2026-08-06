@@ -697,11 +697,18 @@ table([
      "handed out and outlives the connection by hours, so a device appears "
      "once it sends traffic, wearing the name the lease taught."],
     ["<font face='Courier'>--active-within 15</font>",
-     "Limits the graph, sessions and services to the last fifteen minutes. A "
-     "gateway runs for weeks, and without it the dashboard fills with "
-     "everything ever seen. Devices are not removed by it: a phone that has "
-     "gone home stays in the Devices panel marked offline, since it is still a "
-     "device on this network. What it did earlier is in the History panel."],
+     "Limits the <b>sessions and the graph</b> to the last fifteen minutes, so "
+     "a gateway that has run for weeks does not show an hour-old session as "
+     "though it were live. It deliberately does not touch the time totals, the "
+     "service rankings or the device list: those answer \"where did today "
+     "go\", and cutting them to the window reported an hour of YouTube as zero "
+     "the moment you stopped watching. A phone that has gone home stays "
+     "listed, marked offline, with its time still counted."],
+    ["<font face='Courier'>--enforce-blacklist</font>",
+     "Actually drops traffic from a group's devices to the sites it has "
+     "blocked and the services whose daily limit it has spent. Refused "
+     "without --accounts, since a block needs a group to apply to. See the "
+     "section below before turning it on."],
     ["<font face='Courier'>--show-background</font>",
      "Puts DNS, DHCP, clock sync, update checks and ad beacons back into the "
      "headline panels. Left out by default because none of it is something a "
@@ -739,6 +746,40 @@ p("Open <font face='Courier'>http://192.168.50.1:8420</font> from any device "
   "on the network. Browse something distinctive on your phone, wait roughly "
   "10 seconds for flows to close and classify, then check <b>Where Your Time "
   "Went</b> and <b>Time by Person</b>.")
+
+h3("9.1  Blocking and daily limits")
+
+p("Each group can block sites outright, and can give itself a daily "
+  "allowance for a service. Both are managed from the dashboard's <b>Daily "
+  "Limits &amp; Blocked Sites</b> panel: a person manages their own, and the "
+  "admin sees and can edit every group's. Neither does anything to the "
+  "network until <font face='Courier'>--enforce-blacklist</font> is added.")
+
+callout("How enforcement is kept safe",
+        "Rules live in an nftables table of their own, called "
+        "<font face='Courier'>activitygraph</font>. The filter and nat tables "
+        "from Phase 4.3 are never touched, and the whole table is replaced in "
+        "one atomic operation, so there is no moment where half a ruleset is "
+        "live. If anything fails the table is removed rather than left partly "
+        "applied: it fails open by design. Only forwarded traffic is dropped, "
+        "so a group blocking half the internet keeps the dashboard, DNS and "
+        "SSH, and with them the means to undo it.",
+        colour=ACCENT, bg=colors.HexColor("#EEF7F3"))
+
+p("A daily limit blocks only a service's front door. Over HTTPS the hostname "
+  "is visible but the path is not, so youtube.com/watch and youtube.com/embed "
+  "cannot be told apart; what can be told apart is which hosts each uses. An "
+  "hour spent on YouTube blocks youtube.com and leaves googlevideo.com and "
+  "youtube-nocookie.com reachable, so a video embedded in an article still "
+  "plays and a map on a shop's contact page still loads. A service with no "
+  "known front door is marked <b>not blockable</b> in the panel rather than "
+  "appearing to work.")
+
+p("Blocking a domain covers its subdomains but not its siblings: blocking "
+  "tiktok.com does not block tiktokcdn.com, which is a separate domain. Add "
+  "it as well if you want the app fully unreachable. A device with a cached "
+  "DNS answer can also reach the address until that cache expires, so a block "
+  "is firm within about a minute rather than instantly.")
 
 h3("9.1  Create the admin account first")
 callout("Whoever registers first becomes the admin",
