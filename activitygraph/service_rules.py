@@ -285,6 +285,52 @@ _COMPILED_DOMAIN_RULES = [(re.compile(pattern, re.IGNORECASE), svc, cat) for pat
 # everything else. Reported separately rather than discarded.
 BACKGROUND_CATEGORIES = frozenset({"Infrastructure", "System", "Ads and Tracking"})
 
+# The hostnames a person reaches when they deliberately go somewhere, as
+# distinct from the ones other sites load on their behalf.
+#
+# This exists for time limits. Over TLS the hostname is visible but the path
+# is not, so youtube.com/watch and youtube.com/embed cannot be told apart.
+# What can be told apart is which *hosts* each uses: a page you visited is
+# fetched from the front door, while an embedded player, a map tile or a
+# font comes from an API or CDN host that exists for that purpose. Blocking
+# only the front door stops someone opening YouTube once their hour is up,
+# and leaves a video embedded in an article, or a map on a shop's contact
+# page, working. A limit on watching should not quietly break the rest of
+# the web.
+#
+# Deliberately conservative: a service absent from here is never blocked by
+# a quota, because failing to enforce a limit is a much smaller harm than
+# breaking a page nobody meant to restrict.
+PRIMARY_DOMAINS: dict[str, tuple] = {
+    # youtube-nocookie.com is the embed-only domain, so it is absent, as is
+    # googlevideo.com: the stream host serves embedded players too.
+    "YouTube": ("youtube.com", "m.youtube.com"),
+    "YouTube Music": ("music.youtube.com",),
+    # maps.googleapis.com and maps.gstatic.com serve embedded maps and stay
+    # reachable; only the destination site itself is blocked.
+    "Google Maps": ("maps.google.com",),
+    "Netflix": ("netflix.com",),
+    "TikTok": ("tiktok.com",),
+    "Instagram": ("instagram.com",),
+    "Facebook": ("facebook.com",),
+    "X (Twitter)": ("twitter.com", "x.com"),
+    "Reddit": ("reddit.com",),
+    "Twitch": ("twitch.tv",),
+    "Snapchat": ("snapchat.com",),
+    "Pinterest": ("pinterest.com",),
+    "LinkedIn": ("linkedin.com",),
+    "Spotify": ("open.spotify.com", "spotify.com"),
+    "Steam": ("steamcommunity.com", "store.steampowered.com"),
+    "Roblox": ("roblox.com",),
+    "Amazon": ("amazon.com", "amazon.com.au"),
+    "eBay": ("ebay.com", "ebay.com.au"),
+}
+
+
+def blockable_domains(service: str) -> tuple:
+    """The front doors of a service, or () if it should never be blocked."""
+    return PRIMARY_DOMAINS.get(service, ())
+
 # Fallback classification purely by well-known port, used when there's no
 # domain/SNI available at all (e.g. raw non-HTTP(S) traffic).
 PORT_RULES: dict[int, tuple[str, str]] = {

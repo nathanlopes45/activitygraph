@@ -251,6 +251,19 @@ class AccountStore:
                 UNIQUE(user_id, pattern),
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             );
+
+            -- How long a group is willing to spend on a service each day.
+            -- Stored in seconds and per service rather than per domain,
+            -- because "an hour of YouTube" is the thing a person means, and
+            -- which hosts that turns into is the tool's problem.
+            CREATE TABLE IF NOT EXISTS quotas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                service TEXT NOT NULL,
+                daily_seconds INTEGER NOT NULL,
+                UNIQUE(user_id, service),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
         """)
         self._conn.commit()
 
@@ -413,6 +426,38 @@ class AccountStore:
         for entry in groups.values():
             entry["device_macs"] = sorted(self.macs_for_user(entry["user_id"]))
         return list(groups.values())
+
+    # -- daily limits ------------------------------------------------------
+
+    def set_quota(self, user_id: int, service: str, daily_seconds: int) -> None:
+        """Limit a service to this many seconds a day. Zero removes it."""
+        service = (service or "").strip()
+        if not service:
+            raise AccountError("Choose a service to limit.")
+        if daily_seconds <= 0:
+            self._conn.execute(
+                "DELETE FROM quotas WHERE user_id = ? AND service = ?", (user_id, service))
+        else:
+            self._conn.execute(
+                """INSERT INTO quotas (user_id, service, daily_seconds) VALUES (?, ?, ?)
+                   ON CONFLICT(user_id, service) DO UPDATE SET
+                     daily_seconds = excluded.daily_seconds""",
+                (user_id, service, int(daily_seconds)),
+            )
+        self._conn.commit()
+
+    def quotas_for(self, user_id: int) -> dict:
+        rows = self._conn.execute(
+            "SELECT service, daily_seconds FROM quotas WHERE user_id = ?", (user_id,))
+        return {service: seconds for service, seconds in rows}
+
+    def all_quotas(self) -> dict:
+        """Every group's limits, keyed by user id, for enforcement."""
+        rows = self._conn.execute("SELECT user_id, service, daily_seconds FROM quotas")
+        limits = {}
+        for user_id, service, seconds in rows:
+            limits.setdefault(user_id, {})[service] = seconds
+        return limits
 
     def release_device(self, user_id: int, mac: str) -> bool:
         cur = self._conn.execute(

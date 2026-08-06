@@ -158,3 +158,36 @@ def _run_nft(script: str) -> tuple:
     if result.returncode != 0:
         return False, (result.stderr or "").strip() or "nft rejected the ruleset"
     return True, "applied"
+
+
+def exhausted_services(quotas: dict, used_seconds: dict) -> list:
+    """Services whose daily allowance a group has spent.
+
+    Kept separate from the blocking so the decision can be tested and shown
+    without touching a firewall: the dashboard needs to say "48 of 60
+    minutes" long before anything is dropped.
+    """
+    spent = []
+    for service, allowed in (quotas or {}).items():
+        if allowed > 0 and (used_seconds or {}).get(service, 0) >= allowed:
+            spent.append(service)
+    return sorted(spent)
+
+
+def quota_patterns(services: Iterable[str]) -> list:
+    """The domains to block for services that have run out of time.
+
+    Only front doors, so a limit on watching YouTube does not break a video
+    embedded in an article or a map on a shop's contact page. A service with
+    no known front door contributes nothing rather than being blocked
+    broadly: failing to enforce a limit is a much smaller harm than breaking
+    a page nobody meant to restrict.
+    """
+    from .service_rules import blockable_domains
+
+    patterns = []
+    for service in services or []:
+        for domain in blockable_domains(service):
+            if domain not in patterns:
+                patterns.append(domain)
+    return sorted(patterns)

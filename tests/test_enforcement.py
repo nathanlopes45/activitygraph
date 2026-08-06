@@ -160,3 +160,71 @@ def test_addresses_are_capped():
     huge = {f"10.0.{i // 256}.{i % 256}": "tiktok.com" for i in range(MAX_ADDRESSES_PER_GROUP + 500)}
     script = render_ruleset([group("Sam", ["tiktok.com"], [SAMS_PHONE])], ADDRESSES, huge)
     assert script.count("10.0.") <= MAX_ADDRESSES_PER_GROUP
+
+
+# ---------------- daily limits ----------------
+
+from activitygraph.enforcement import exhausted_services, quota_patterns  # noqa: E402
+
+
+def test_a_service_under_its_limit_is_left_alone():
+    assert exhausted_services({"YouTube": 3600}, {"YouTube": 1800}) == []
+
+
+def test_a_service_at_its_limit_is_spent():
+    """At, not past: an hour means an hour."""
+    assert exhausted_services({"YouTube": 3600}, {"YouTube": 3600}) == ["YouTube"]
+
+
+def test_only_the_service_that_ran_out_is_affected():
+    spent = exhausted_services({"YouTube": 3600, "Instagram": 1800},
+                               {"YouTube": 3900, "Instagram": 600})
+    assert spent == ["YouTube"]
+
+
+def test_a_service_with_no_recorded_time_is_not_spent():
+    assert exhausted_services({"YouTube": 3600}, {}) == []
+
+
+# The requirement that shapes the whole design: a limit on watching YouTube
+# must not break a video embedded in an article, or a map on a shop's
+# contact page. Over TLS the hostname is visible but the path is not, so
+# youtube.com/watch and youtube.com/embed cannot be told apart. What can be
+# told apart is which hosts each uses.
+
+def test_only_the_front_door_is_blocked():
+    assert quota_patterns(["YouTube"]) == ["m.youtube.com", "youtube.com"]
+
+
+@pytest.mark.parametrize("host", [
+    "youtube-nocookie.com",   # the embed-only domain
+    "googlevideo.com",        # serves embedded players too
+    "ytimg.com",
+])
+def test_the_hosts_that_serve_embedded_players_are_never_blocked(host):
+    assert host not in quota_patterns(["YouTube"])
+
+
+@pytest.mark.parametrize("host", ["maps.googleapis.com", "maps.gstatic.com"])
+def test_the_hosts_that_serve_embedded_maps_are_never_blocked(host):
+    """A shop's contact page loads a map from the API host. Blocking it
+    would break a page nobody meant to restrict."""
+    assert host not in quota_patterns(["Google Maps"])
+    assert quota_patterns(["Google Maps"]) == ["maps.google.com"]
+
+
+def test_a_service_with_no_known_front_door_is_never_blocked():
+    """Conservative on purpose: failing to enforce a limit is a much
+    smaller harm than breaking something unrelated."""
+    assert quota_patterns(["Some Internal Tool"]) == []
+    assert quota_patterns(["DNS"]) == []
+
+
+def test_spent_services_become_ordinary_block_patterns():
+    """The limit reuses the blacklist machinery rather than a second path
+    through the firewall, so there is one place where rules are written."""
+    patterns = quota_patterns(exhausted_services({"TikTok": 600}, {"TikTok": 900}))
+    script = render_ruleset(
+        [{"username": "Sam", "patterns": patterns, "device_macs": [SAMS_PHONE]}],
+        ADDRESSES, {"1.2.3.4": "tiktok.com"})
+    assert "192.168.50.50" in script and "1.2.3.4" in script
