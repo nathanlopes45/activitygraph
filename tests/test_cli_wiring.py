@@ -54,11 +54,11 @@ BASE_SERVE = ["--serve", "--serve-source", "live", "-i", "eth1", "--no-browser"]
 
 @pytest.mark.parametrize("extra", [
     [],
-    ["--exclude-self"],
+    ["--include-self"],
     ["--capture-mode", "light"],
-    ["--capture-mode", "light", "--exclude-self"],
+    ["--capture-mode", "light", "--include-self"],
     ["--bpf-filter", "arp or (udp and port 53)"],
-], ids=["plain", "exclude-self", "light", "light+exclude-self", "own-filter"])
+], ids=["plain", "include-self", "light", "light+include-self", "own-filter"])
 def test_serve_live_constructs(extra, tmp_path):
     """The mode a gateway runs, and the one that broke. It builds a Pipeline
     and a BackgroundCapture from the same arguments, so a keyword accepted
@@ -69,7 +69,6 @@ def test_serve_live_constructs(extra, tmp_path):
 def test_serve_live_with_everything_a_gateway_uses(tmp_path):
     run_cli(BASE_SERVE + [
         "--capture-mode", "light",
-        "--exclude-self",
         "--dhcp-leases",
         "--accounts", str(tmp_path / "accounts.db"),
         "--history-db", str(tmp_path / "history.db"),
@@ -81,7 +80,7 @@ def test_serve_demo_constructs(tmp_path):
              "--history-db", str(tmp_path / "h.db")], tmp_path)
 
 
-@pytest.mark.parametrize("extra", [[], ["--exclude-self"], ["--capture-mode", "light"]])
+@pytest.mark.parametrize("extra", [[], ["--include-self"], ["--capture-mode", "light"]])
 def test_live_capture_constructs(extra, tmp_path):
     run_cli(["--live", "-i", "eth1", "--duration", "0"] + extra, tmp_path)
 

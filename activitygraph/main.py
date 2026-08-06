@@ -511,12 +511,6 @@ def main() -> None:
                               "the default route, which means it is acting as a gateway: it "
                               "forwards everyone's traffic but is nobody's device, and it "
                               "otherwise appears under every address it answers on.")
-    parser.add_argument("--exclude-self", action="store_true",
-                         help="Leave this machine out of the device list. On a gateway the "
-                              "capturing machine forwards everyone's traffic but is nobody's "
-                              "device, so it otherwise appears alongside the phones and laptops, "
-                              "sometimes more than once. Do not use it on a laptop capturing its "
-                              "own traffic, where that machine is the only thing there is to see.")
     parser.add_argument("--capture-mode", choices=["full", "light"], default="full",
                          help="How much traffic to inspect. 'full' reads every packet and "
                               "gives exact byte totals, but the per-packet cost is far higher "
@@ -555,12 +549,11 @@ def main() -> None:
     if not args.include_self:
         from .collector import default_route_interface, local_hardware_addresses
 
-        is_gateway = bool(args.interface) and args.interface != default_route_interface()
-        if args.exclude_self or is_gateway:
+        if bool(args.interface) and args.interface != default_route_interface():
             excluded_macs = local_hardware_addresses()
-            reason = "requested" if args.exclude_self else "capturing the LAN side"
-            print(f"[activitygraph] Leaving this machine out of the device list "
-                  f"({reason}). Pass --include-self to list it.")
+            print("[activitygraph] Leaving this machine out of the device list: it is "
+                  "capturing the LAN side, so it is a gateway rather than a device. "
+                  "Pass --include-self to list it.")
     # Checked here rather than inside the capture thread, where the failure
     # would surface long after the command and behind an already-running,
     # permanently empty dashboard.
