@@ -51,6 +51,34 @@ class AccountError(Exception):
     """Raised for conditions the caller is expected to show to a user."""
 
 
+def normalise_blocked_pattern(pattern: str) -> str:
+    """Reduce what someone typed to the domain it names.
+
+    People paste URLs, type "www." out of habit, and capitalise
+    inconsistently. Storing those verbatim gives a list nobody can reason
+    about and an enforcement rule that has to match every variant, so the
+    normalising happens once, here, on the way in.
+
+    Returns "" for anything that does not name a domain, which the caller
+    reports rather than storing.
+    """
+    text = (pattern or "").strip().lower()
+    if not text:
+        return ""
+    text = re.sub(r"^[a-z]+://", "", text)   # scheme
+    text = text.split("/")[0]                # path
+    text = text.split("?")[0].split("#")[0]
+    text = text.split("@")[-1]               # credentials
+    text = text.split(":")[0]                # port
+    text = text.strip(".")
+    if text.startswith("www."):
+        text = text[4:]
+    # A domain, not a sentence and not an address typed by mistake.
+    if not re.fullmatch(r"[a-z0-9-]+(\.[a-z0-9-]+)+", text):
+        return ""
+    return text
+
+
 @dataclass
 class User:
     id: int
@@ -210,6 +238,19 @@ class AccountStore:
                 claimed_at TEXT NOT NULL,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             );
+
+            -- Domains a group has chosen not to reach. Scoped per user
+            -- rather than network-wide: one person's distraction is another
+            -- person's work, and a shared list would make every entry an
+            -- argument.
+            CREATE TABLE IF NOT EXISTS blacklist (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                pattern TEXT NOT NULL,
+                added_at TEXT NOT NULL,
+                UNIQUE(user_id, pattern),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
         """)
         self._conn.commit()
 
@@ -314,6 +355,64 @@ class AccountStore:
                  FROM claimed_devices c JOIN users u ON u.id = c.user_id
                 WHERE c.label IS NOT NULL AND c.label != ''""")
         return {mac: f"{username}'s {label}" for mac, label, username in rows}
+
+    # -- blacklists --------------------------------------------------------
+
+    def add_blocked(self, user_id: int, pattern: str) -> str:
+        """Add a domain to a group's blacklist. Returns the stored form.
+
+        Normalised on the way in, because a list that holds both
+        "TikTok.com" and "www.tiktok.com/" as separate entries is one a
+        person cannot reason about, and enforcement would have to match
+        both.
+        """
+        cleaned = normalise_blocked_pattern(pattern)
+        if not cleaned:
+            raise AccountError("Enter a website address, for example tiktok.com")
+        self._conn.execute(
+            """INSERT INTO blacklist (user_id, pattern, added_at) VALUES (?, ?, ?)
+               ON CONFLICT(user_id, pattern) DO NOTHING""",
+            (user_id, cleaned, datetime.now(timezone.utc).isoformat()),
+        )
+        self._conn.commit()
+        return cleaned
+
+    def remove_blocked(self, user_id: int, pattern: str) -> bool:
+        cur = self._conn.execute(
+            "DELETE FROM blacklist WHERE user_id = ? AND pattern = ?",
+            (user_id, normalise_blocked_pattern(pattern)),
+        )
+        self._conn.commit()
+        return cur.rowcount > 0
+
+    def blocked_for(self, user_id: int) -> list:
+        rows = self._conn.execute(
+            "SELECT pattern FROM blacklist WHERE user_id = ? ORDER BY pattern", (user_id,))
+        return [row[0] for row in rows]
+
+    def blocked_by_group(self) -> list:
+        """Every group's list, for the admin view and for enforcement.
+
+        Enforcement needs the owner's devices alongside the patterns: the
+        whole point is that a block applies to that group's devices and
+        nobody else's.
+        """
+        rows = self._conn.execute(
+            """SELECT u.id, u.username, u.group_name, b.pattern
+                 FROM users u LEFT JOIN blacklist b ON b.user_id = u.id
+                WHERE u.is_admin = 0
+                ORDER BY u.username, b.pattern""")
+        groups = {}
+        for user_id, username, group_name, pattern in rows:
+            entry = groups.setdefault(user_id, {
+                "user_id": user_id, "username": username,
+                "group": group_name, "patterns": [], "device_macs": [],
+            })
+            if pattern:
+                entry["patterns"].append(pattern)
+        for entry in groups.values():
+            entry["device_macs"] = sorted(self.macs_for_user(entry["user_id"]))
+        return list(groups.values())
 
     def release_device(self, user_id: int, mac: str) -> bool:
         cur = self._conn.execute(

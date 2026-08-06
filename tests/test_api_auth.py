@@ -56,6 +56,10 @@ def env():
     accounts.create_user("theadmin", "password123")
     app = create_app(pipeline, live=False, accounts=accounts, secret=SECRET)
     routes = {r.path: r.endpoint for r in app.routes if hasattr(r, "endpoint")}
+    # /api/blacklist is three handlers on one path, so keying by path
+    # alone keeps only the last one registered.
+    routes.update({r.endpoint.__name__: r.endpoint
+                   for r in app.routes if hasattr(r, "endpoint")})
     return pipeline, accounts, routes
 
 
@@ -518,3 +522,119 @@ def test_releasing_a_device_takes_its_name_back(env):
     routes["/api/unclaim"](FakeRequest(token=issue_token(sam.id, SECRET)),
                            {"mac": device.mac})
     assert accounts.device_labels() == {}
+
+
+# ---------------- blacklists ----------------
+
+# A group's own list, not a network-wide one: one person's distraction is
+# another person's work. The rule that carries the weight is that editing
+# someone else's list requires being the admin.
+
+@pytest.mark.parametrize("typed,stored", [
+    ("tiktok.com", "tiktok.com"),
+    ("TikTok.com", "tiktok.com"),
+    ("www.tiktok.com", "tiktok.com"),
+    ("https://www.tiktok.com/foryou?lang=en", "tiktok.com"),
+    ("  instagram.com/  ", "instagram.com"),
+    ("tiktok.com:443", "tiktok.com"),
+])
+def test_what_someone_types_is_reduced_to_the_domain(typed, stored):
+    """People paste URLs and type "www." out of habit. Storing those
+    verbatim gives a list nobody can reason about and a rule that has to
+    match every variant."""
+    from activitygraph.accounts import normalise_blocked_pattern
+
+    assert normalise_blocked_pattern(typed) == stored
+
+
+@pytest.mark.parametrize("nonsense", ["", "   ", "not a domain", "localhost", "/", "http://"])
+def test_things_that_do_not_name_a_domain_are_refused(nonsense):
+    from activitygraph.accounts import normalise_blocked_pattern
+
+    assert normalise_blocked_pattern(nonsense) == ""
+
+
+def test_a_user_manages_their_own_list(env):
+    _, accounts, routes = env
+    sam = accounts.create_user("Sam", "password123")
+    token = issue_token(sam.id, SECRET)
+
+    routes["add_blacklist"](FakeRequest(token=token), {"pattern": "https://www.TikTok.com/foryou"})
+    assert accounts.blocked_for(sam.id) == ["tiktok.com"]
+
+    data = body(routes["get_blacklist"](FakeRequest(token=token)))
+    assert data["patterns"] == ["tiktok.com"]
+    assert data["group"] == "Sam's group"
+
+
+def test_adding_the_same_entry_twice_is_harmless(env):
+    _, accounts, routes = env
+    sam = accounts.create_user("Sam", "password123")
+    for _ in range(3):
+        accounts.add_blocked(sam.id, "tiktok.com")
+    assert accounts.blocked_for(sam.id) == ["tiktok.com"]
+
+
+def test_one_group_cannot_edit_anothers_list(env):
+    """The rule the per-group model rests on."""
+    _, accounts, routes = env
+    sam = accounts.create_user("Sam", "password123")
+    bob = accounts.create_user("Bob", "password123")
+
+    result = routes["add_blacklist"](
+        FakeRequest(token=issue_token(bob.id, SECRET)),
+        {"pattern": "tiktok.com", "user_id": sam.id})
+
+    assert status(result) == 403
+    assert accounts.blocked_for(sam.id) == []
+
+
+def test_a_user_does_not_see_anyone_elses_list(env):
+    _, accounts, routes = env
+    sam = accounts.create_user("Sam", "password123")
+    bob = accounts.create_user("Bob", "password123")
+    accounts.add_blocked(sam.id, "tiktok.com")
+
+    data = body(routes["get_blacklist"](FakeRequest(token=issue_token(bob.id, SECRET))))
+    assert data["patterns"] == []
+    assert "groups" not in data, "only the admin sees every group"
+
+
+def test_the_admin_sees_every_group_with_the_devices_it_applies_to(env):
+    """Enforcement needs both halves: a block applies to that group's
+    devices and nobody else's."""
+    pipeline, accounts, routes = env
+    admin = accounts.authenticate("theadmin", "password123")
+    sam = accounts.create_user("Sam", "password123")
+    device = pipeline.devices.all_devices()[0]
+    accounts.claim_device(sam.id, device.mac, "iPhone")
+    accounts.add_blocked(sam.id, "tiktok.com")
+
+    data = body(routes["get_blacklist"](FakeRequest(token=issue_token(admin.id, SECRET))))
+    assert data["is_admin"] is True
+    sams = [g for g in data["groups"] if g["username"] == "Sam"][0]
+    assert sams["patterns"] == ["tiktok.com"]
+    assert sams["device_macs"] == [device.mac.upper()]
+
+
+def test_the_admin_can_update_another_groups_list(env):
+    _, accounts, routes = env
+    admin = accounts.authenticate("theadmin", "password123")
+    sam = accounts.create_user("Sam", "password123")
+
+    routes["add_blacklist"](FakeRequest(token=issue_token(admin.id, SECRET)),
+                            {"pattern": "tiktok.com", "user_id": sam.id})
+    assert accounts.blocked_for(sam.id) == ["tiktok.com"]
+
+
+def test_removing_an_entry_that_is_not_there_says_so(env):
+    _, accounts, routes = env
+    sam = accounts.create_user("Sam", "password123")
+    result = routes["remove_blacklist"](
+        FakeRequest(token=issue_token(sam.id, SECRET)), {"pattern": "nothere.com"})
+    assert status(result) in (400, 404)
+
+
+def test_a_blacklist_needs_a_sign_in(env):
+    _, _, routes = env
+    assert status(routes["get_blacklist"](FakeRequest())) == 401
