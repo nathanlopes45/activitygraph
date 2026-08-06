@@ -734,6 +734,10 @@ Accounts and their session key live under `~/.activitygraph/` by default
 signs everyone out. Passwords are stored as salted PBKDF2-HMAC-SHA256 hashes,
 never in plaintext.
 
+## Changelog
+
+Notable changes are in [CHANGELOG.md](CHANGELOG.md).
+
 ## Tests
 
 ```bash

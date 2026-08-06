@@ -1,0 +1,49 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor is what pyproject requires; the ceiling is what a
+        # current Raspberry Pi OS image ships, which is where this actually
+        # runs. Testing both catches a syntax or stdlib change that only
+        # breaks on the machine nobody develops on.
+        python-version: ["3.11", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install libpcap
+        # scapy compiles capture filters through libpcap. Without it the
+        # filter tests skip rather than fail, which would quietly stop CI
+        # from covering the rules that decide what the gateway drops.
+        run: sudo apt-get update && sudo apt-get install -y libpcap-dev
+
+      - name: Install
+        run: pip install -e ".[dev,docs]"
+
+      - name: Lint
+        run: |
+          pip install pyflakes
+          python -m pyflakes activitygraph/ tests/ docs/build_runbook.py
+
+      - name: Test
+        run: python -m pytest -q
+
+      - name: Check the runbook still builds
+        # The PDF is committed, so a change to the builder that breaks it
+        # would otherwise only surface the next time somebody regenerated it.
+        run: python docs/build_runbook.py
