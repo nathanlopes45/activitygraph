@@ -228,3 +228,61 @@ def test_spent_services_become_ordinary_block_patterns():
         [{"username": "Sam", "patterns": patterns, "device_macs": [SAMS_PHONE]}],
         ADDRESSES, {"1.2.3.4": "tiktok.com"})
     assert "192.168.50.50" in script and "1.2.3.4" in script
+
+
+# ---------------- a blacklist means all of it ----------------
+
+# A phone app does not visit a website. The YouTube app fetches video from
+# googlevideo.com and never touches youtube.com, so blocking the domain
+# somebody typed left the app working and the block looking broken.
+
+APP_DNS = {
+    "1.1.1.1": "www.youtube.com",
+    "2.2.2.2": "rr3---sn-abc.googlevideo.com",
+    "3.3.3.3": "i.ytimg.com",
+    "4.4.4.4": "youtubei.googleapis.com",
+    "9.9.9.9": "github.com",
+}
+
+
+def test_blocking_a_site_covers_the_hosts_its_app_uses():
+    found = addresses_for_patterns(["youtube.com"], APP_DNS, whole_service=True)
+    assert "2.2.2.2" in found, "the app streams from googlevideo and would keep working"
+    assert "4.4.4.4" in found, "the app's own API"
+
+
+def test_a_daily_limit_still_spares_the_embed_hosts():
+    """The opposite requirement, and why the two cannot share one rule: a
+    limit must leave a video embedded in an article playing."""
+    narrow = addresses_for_patterns(quota_patterns(["YouTube"]), APP_DNS, whole_service=False)
+    assert narrow == ["1.1.1.1"]
+
+
+def test_blocking_one_service_does_not_reach_another():
+    assert "9.9.9.9" not in addresses_for_patterns(["youtube.com"], APP_DNS, whole_service=True)
+
+
+def test_a_blocked_site_with_no_known_service_still_blocks_itself():
+    """Expanding by service must not be the only thing that works, or an
+    ordinary site nobody has a rule for would stop being blockable."""
+    dns = {"7.7.7.7": "www.example.invalid", "8.8.8.8": "other.invalid"}
+    found = addresses_for_patterns(["example.invalid"], dns, whole_service=True)
+    assert found == ["7.7.7.7"]
+
+
+def test_the_two_kinds_are_merged_into_one_rule():
+    script = render_ruleset(
+        [{"username": "Sam", "patterns": ["youtube.com"],
+          "quota_patterns": ["instagram.com"], "device_macs": [SAMS_PHONE]}],
+        ADDRESSES, {**APP_DNS, "5.6.7.8": "instagram.com"})
+    assert "2.2.2.2" in script   # blacklist, whole service
+    assert "5.6.7.8" in script   # spent limit, front door only
+
+
+def test_a_group_with_only_a_spent_limit_still_gets_a_rule():
+    """Its blacklist is empty, which used to skip the group entirely."""
+    script = render_ruleset(
+        [{"username": "Sam", "patterns": [],
+          "quota_patterns": ["tiktok.com"], "device_macs": [SAMS_PHONE]}],
+        ADDRESSES, DNS)
+    assert script is not None and "1.2.3.4" in script

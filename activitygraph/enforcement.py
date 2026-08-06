@@ -39,24 +39,46 @@ TABLE = "activitygraph"
 MAX_ADDRESSES_PER_GROUP = 4096
 
 
-def addresses_for_patterns(patterns: Iterable[str], dns_cache: dict) -> list[str]:
+def addresses_for_patterns(patterns: Iterable[str], dns_cache: dict,
+                           whole_service: bool = False) -> list[str]:
     """Every learned address belonging to one of these domains.
 
     Matches a domain and its subdomains, so blocking "tiktok.com" also
-    covers the CDN hosts under it, which is where the traffic actually goes.
+    covers the CDN hosts under it.
+
+    `whole_service` additionally covers the other domains the same service
+    uses, which is what a blacklist means and a daily limit does not. A
+    phone app does not visit a website: the YouTube app fetches video from
+    googlevideo.com and never touches youtube.com at all, so blocking the
+    domain someone typed leaves the app working and the block looking
+    broken. Somebody who blocks YouTube outright means all of it. A limit
+    stays narrow, because there the point is to stop the front door while
+    leaving a video embedded in an article alone.
     """
     wanted = {p.strip().lower().lstrip(".") for p in patterns if p and p.strip()}
     if not wanted:
         return []
+
+    services = set()
+    if whole_service:
+        from .service_rules import classify_domain
+
+        for domain in wanted:
+            match = classify_domain(domain)
+            if match:
+                services.add(match.service)
 
     found = []
     for address, hostname in dns_cache.items():
         name = (hostname or "").strip().lower().rstrip(".")
         if not name:
             continue
-        if any(name == w or name.endswith("." + w) for w in wanted):
-            if address not in found:
-                found.append(address)
+        hit = any(name == w or name.endswith("." + w) for w in wanted)
+        if not hit and services:
+            match = classify_domain(name)
+            hit = match is not None and match.service in services
+        if hit and address not in found:
+            found.append(address)
     return sorted(found)
 
 
@@ -77,7 +99,7 @@ def render_ruleset(groups: Iterable[dict], device_addresses: dict,
     blocks = []
     for group in groups:
         patterns = group.get("patterns") or []
-        if not patterns:
+        if not patterns and not group.get("quota_patterns"):
             continue
 
         sources = []
@@ -88,8 +110,13 @@ def render_ruleset(groups: Iterable[dict], device_addresses: dict,
         if not sources:
             continue  # a list with no devices to apply it to blocks nothing
 
-        destinations = [a for a in addresses_for_patterns(patterns, dns_cache)
-                        if _is_ipv4(a)][:MAX_ADDRESSES_PER_GROUP]
+        # A blacklist covers the whole service; a spent daily limit covers
+        # only its front door, so the two are resolved separately and then
+        # merged into one set.
+        resolved = set(addresses_for_patterns(patterns, dns_cache, whole_service=True))
+        resolved |= set(addresses_for_patterns(
+            group.get("quota_patterns") or [], dns_cache, whole_service=False))
+        destinations = sorted(a for a in resolved if _is_ipv4(a))[:MAX_ADDRESSES_PER_GROUP]
         if not destinations:
             continue  # nothing resolved yet; a rule with an empty set is noise
 

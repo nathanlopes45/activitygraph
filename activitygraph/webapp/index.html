@@ -1750,11 +1750,33 @@ async function refreshLimits() {
 
   if (quotas.is_admin) {
     note.textContent = "admin view";
+    // Blocked sites come from a different endpoint than the limits, and
+    // were being fetched and then never drawn, so a group's blacklist was
+    // invisible to the one account that is supposed to oversee it.
+    const blockedByUser = {};
+    (blocked.groups || []).forEach(g => { blockedByUser[g.user_id] = g.patterns || []; });
+
     (quotas.groups || []).forEach(g => {
       container.appendChild(el("div", { class: "cd-name" }, g.group));
       (g.limits || []).forEach(row => container.appendChild(limitRow(row, refreshLimits)));
-      if (!(g.limits || []).length) {
-        container.appendChild(el("div", { class: "cd-meta" }, "no limits set"));
+
+      (blockedByUser[g.user_id] || []).forEach(pattern => {
+        const line = el("div", { class: "claimed-device" });
+        line.appendChild(el("div", { class: "cd-name" }, pattern));
+        const remove = el("button", { class: "btn", type: "button" }, "Unblock");
+        remove.addEventListener("click", async () => {
+          await fetch("/api/blacklist", {
+            method: "DELETE", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ pattern, user_id: g.user_id }),
+          });
+          refreshLimits();
+        });
+        line.appendChild(remove);
+        container.appendChild(line);
+      });
+
+      if (!(g.limits || []).length && !(blockedByUser[g.user_id] || []).length) {
+        container.appendChild(el("div", { class: "cd-meta" }, "nothing set"));
       }
     });
     return;

@@ -684,11 +684,16 @@ Blocking a domain covers its subdomains but not its siblings: blocking
 `tiktok.com` does not block `tiktokcdn.com`, which is a separate domain.
 Add it as well if you want the app fully unreachable.
 
-This matters most for **phone apps**. The YouTube app streams from
-`googlevideo.com`, which a daily limit deliberately leaves alone so that
-videos embedded in other pages keep working. A blacklist entry has no
-such restriction, so block `googlevideo.com` alongside `youtube.com` if
-you want the app itself unreachable rather than just the website. A device with a
+A blacklist entry covers the whole service, not only the domain typed.
+Blocking `youtube.com` also covers `googlevideo.com`, `ytimg.com` and
+the app's own API, because a phone app does not visit a website: the
+YouTube app streams from `googlevideo.com` and never touches
+`youtube.com` at all. Blocking only what was typed left the app working.
+
+A **daily limit** deliberately does not do this. It blocks the front door
+and leaves the rest reachable, so a video embedded in an article still
+plays once the hour is up. The two differ because the intent differs: a
+blacklist says none of this, a limit says enough of this. A device with a
 cached DNS answer can also reach the address until that cache expires, so
 a block is firm within about a minute rather than instantly.
 
