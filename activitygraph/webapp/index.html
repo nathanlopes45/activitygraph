@@ -711,6 +711,14 @@
     <div id="this-device"></div>
   </section>
 
+  <section class="panel" id="limits-panel" hidden>
+    <div class="panel-head">
+      <span class="panel-title">Daily Limits &amp; Blocked Sites</span>
+      <span class="panel-note" id="limits-note"></span>
+    </div>
+    <div id="limits"></div>
+  </section>
+
   <section class="panel" id="my-devices-panel" hidden>
     <div class="panel-head">
       <span class="panel-title">My Group</span>
@@ -1649,6 +1657,104 @@ function renderThisDevice(data, here) {
 }
 
 
+function limitRow(row, onChange) {
+  const spent = row.used_seconds >= row.daily_seconds;
+  const line = el("div", { class: "claimed-device" });
+  const left = el("div", {});
+  const name = el("div", { class: "cd-name" }, row.service);
+  if (spent) name.appendChild(el("span", { class: "offline-tag" }, "blocked today"));
+  // Said plainly: a limit on something with no known front door is recorded
+  // but never blocks, and a promise the tool cannot keep is worse than none.
+  if (!row.enforceable) name.appendChild(el("span", { class: "offline-tag" }, "not blockable"));
+  left.appendChild(name);
+  left.appendChild(el("div", { class: "cd-meta" },
+    formatDuration(row.used_seconds) + " of " + formatDuration(row.daily_seconds) + " today"));
+  line.appendChild(left);
+
+  const remove = el("button", { class: "btn", type: "button" }, "Remove");
+  remove.addEventListener("click", async () => {
+    await postJSON("/api/quotas", { service: row.service, minutes: 0 });
+    onChange();
+  });
+  line.appendChild(remove);
+  return line;
+}
+
+async function refreshLimits() {
+  const panel = document.getElementById("limits-panel");
+  const container = document.getElementById("limits");
+  const note = document.getElementById("limits-note");
+  let quotas, blocked;
+  try {
+    quotas = await (await fetch("/api/quotas")).json();
+    blocked = await (await fetch("/api/blacklist")).json();
+  } catch (err) {
+    return;
+  }
+  if (quotas.error || blocked.error) return;
+
+  panel.hidden = false;
+  container.innerHTML = "";
+  const limits = quotas.limits || [];
+  const patterns = blocked.patterns || [];
+
+  if (quotas.is_admin) {
+    note.textContent = "admin view";
+    (quotas.groups || []).forEach(g => {
+      container.appendChild(el("div", { class: "cd-name" }, g.group));
+      (g.limits || []).forEach(row => container.appendChild(limitRow(row, refreshLimits)));
+      if (!(g.limits || []).length) {
+        container.appendChild(el("div", { class: "cd-meta" }, "no limits set"));
+      }
+    });
+    return;
+  }
+
+  note.textContent = (quotas.spent || []).length
+    ? (quotas.spent || []).length + " blocked for today"
+    : limits.length + patterns.length + " rules";
+
+  limits.forEach(row => container.appendChild(limitRow(row, refreshLimits)));
+
+  const addLimit = el("button", { class: "btn", type: "button" }, "Add a daily limit");
+  addLimit.addEventListener("click", async () => {
+    const service = prompt("Which service? For example YouTube");
+    if (!service) return;
+    const minutes = prompt("How many minutes a day?", "60");
+    if (minutes === null) return;
+    const { ok, data } = await postJSON("/api/quotas", { service, minutes });
+    if (!ok) { alert(data.error || "Could not set that limit."); return; }
+    refreshLimits();
+  });
+  container.appendChild(addLimit);
+
+  patterns.forEach(pattern => {
+    const line = el("div", { class: "claimed-device" });
+    line.appendChild(el("div", { class: "cd-name" }, pattern));
+    const remove = el("button", { class: "btn", type: "button" }, "Unblock");
+    remove.addEventListener("click", async () => {
+      await fetch("/api/blacklist", {
+        method: "DELETE", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pattern }),
+      });
+      refreshLimits();
+    });
+    line.appendChild(remove);
+    container.appendChild(line);
+  });
+
+  const addBlock = el("button", { class: "btn", type: "button" }, "Block a site");
+  addBlock.addEventListener("click", async () => {
+    const pattern = prompt("Which site? For example tiktok.com");
+    if (!pattern) return;
+    const { ok, data } = await postJSON("/api/blacklist", { pattern });
+    if (!ok) { alert(data.error || "Could not block that."); return; }
+    refreshLimits();
+  });
+  container.appendChild(addBlock);
+}
+
+
 async function refreshMyDevices() {
   const container = document.getElementById("my-devices");
   const note = document.getElementById("my-devices-note");
@@ -1671,6 +1777,7 @@ async function refreshMyDevices() {
     : "none yet";
 
   renderThisDevice(data, here);
+  refreshLimits();
 
   // Claiming lives in the This Device panel above, since it only ever
   // applies to the device you are holding. This one is just the group.
