@@ -104,6 +104,9 @@ DOMAIN_RULES: list[tuple[str, str, str]] = [
     # watching time goes unrecognised.
     (r"(^|\.)googlevideo\.com$", "YouTube", "Entertainment"),
     (r"(^|\.)ytimg\.com$", "YouTube", "Entertainment"),
+    # The embed-only domain. Absent until blocking embeds became the
+    # intention, which also left it unclassified in the dashboard.
+    (r"(^|\.)youtube-nocookie\.com$", "YouTube", "Entertainment"),
     (r"(^|\.)ggpht\.com$", "YouTube", "Entertainment"),
     (r"(^|\.)netflix\.com$", "Netflix", "Entertainment"),
     (r"(^|\.)nflxvideo\.net$", "Netflix", "Entertainment"),
@@ -285,29 +288,22 @@ _COMPILED_DOMAIN_RULES = [(re.compile(pattern, re.IGNORECASE), svc, cat) for pat
 # everything else. Reported separately rather than discarded.
 BACKGROUND_CATEGORIES = frozenset({"Infrastructure", "System", "Ads and Tracking"})
 
-# The hostnames a person reaches when they deliberately go somewhere, as
-# distinct from the ones other sites load on their behalf.
+# The services a person can put a limit or a block on, named by the host
+# they would think of as the destination.
 #
-# This exists for time limits. Over TLS the hostname is visible but the path
-# is not, so youtube.com/watch and youtube.com/embed cannot be told apart.
-# What can be told apart is which *hosts* each uses: a page you visited is
-# fetched from the front door, while an embedded player, a map tile or a
-# font comes from an API or CDN host that exists for that purpose. Blocking
-# only the front door stops someone opening YouTube once their hour is up,
-# and leaves a video embedded in an article, or a map on a shop's contact
-# page, working. A limit on watching should not quietly break the rest of
-# the web.
+# This is a list of what is *offerable*, not of what gets blocked. Blocking
+# covers the whole service, every host `classify_domain` attributes to it,
+# including the ones an app streams from and the ones that serve it embedded
+# in somebody else's page. An earlier version blocked only the entries here,
+# to keep an embedded video playing, and the effect was that a limit did
+# nothing a person could see: the app used the same hosts as the embed.
 #
-# Deliberately conservative: a service absent from here is never blocked by
-# a quota, because failing to enforce a limit is a much smaller harm than
-# breaking a page nobody meant to restrict.
+# Deliberately conservative: a service absent from here can never be blocked
+# by a quota at all, because failing to enforce a limit is a much smaller
+# harm than breaking something nobody meant to restrict.
 PRIMARY_DOMAINS: dict[str, tuple] = {
-    # youtube-nocookie.com is the embed-only domain, so it is absent, as is
-    # googlevideo.com: the stream host serves embedded players too.
     "YouTube": ("youtube.com", "m.youtube.com"),
     "YouTube Music": ("music.youtube.com",),
-    # maps.googleapis.com and maps.gstatic.com serve embedded maps and stay
-    # reachable; only the destination site itself is blocked.
     "Google Maps": ("maps.google.com",),
     "Netflix": ("netflix.com",),
     "TikTok": ("tiktok.com",),
@@ -330,41 +326,6 @@ PRIMARY_DOMAINS: dict[str, tuple] = {
 def blockable_domains(service: str) -> tuple:
     """The front doors of a service, or () if it should never be blocked."""
     return PRIMARY_DOMAINS.get(service, ())
-
-
-# Hosts that serve a service's content *inside somebody else's page*.
-#
-# This exists because "front doors only" was the wrong way to keep a daily
-# limit from breaking embeds. It kept embeds working, but it also left the
-# apps working: a limit on Instagram blocked instagram.com while the feed
-# carried on loading from scontent-*.cdninstagram.com, so the limit did
-# nothing a person could see.
-#
-# A limit now covers the whole service and subtracts these, which is the
-# same question asked the right way round: not "which host is the front
-# door" but "which host would a stranger's page be relying on".
-EMBED_DOMAINS: tuple = (
-    "googlevideo.com",       # the video stream itself, embedded or not
-    "youtube-nocookie.com",  # the embed-only YouTube domain
-    "ytimg.com",             # thumbnails, including in an embedded player
-    "maps.googleapis.com",   # a map on a shop's contact page
-    "maps.gstatic.com",
-    "gstatic.com",           # shared static assets, never a destination
-)
-
-
-def is_embed_host(hostname: Optional[str]) -> bool:
-    """True if this host serves content embedded in other people's pages.
-
-    Matched by suffix, so the CDN hosts under an embed domain are covered
-    too: a YouTube stream arrives from a name like
-    rr3---sn-4g5e6nez.googlevideo.com, never from googlevideo.com itself.
-    """
-    name = (hostname or "").strip().lower().rstrip(".")
-    if not name:
-        return False
-    return any(name == domain or name.endswith("." + domain)
-               for domain in EMBED_DOMAINS)
 
 # Fallback classification purely by well-known port, used when there's no
 # domain/SNI available at all (e.g. raw non-HTTP(S) traffic).

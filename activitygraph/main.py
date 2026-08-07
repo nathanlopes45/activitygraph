@@ -492,6 +492,15 @@ def main() -> None:
                               "nftables rules in a table of its own, leaving your other rules "
                               "untouched, and removes them if anything goes wrong rather than "
                               "leaving half a ruleset live. Needs root, and needs --accounts.")
+    parser.add_argument("--flow-accounting", action="store_true",
+                         help="Take exact byte counts and liveness from the kernel's "
+                              "connection tracker instead of from the packets that got "
+                              "past the capture filter. This is what makes light mode "
+                              "exact rather than sampled: every packet is already counted "
+                              "by the NAT path, so reading that table costs one pass over "
+                              "open connections instead of one pass over packets. Needs a "
+                              "gateway doing connection tracking, root, and "
+                              "net.netfilter.nf_conntrack_acct=1.")
     parser.add_argument("--show-background", action="store_true",
                          help="Include machine traffic in the headline panels: DNS, DHCP, "
                               "clock sync, OS and browser update checks, ad and analytics "
@@ -565,6 +574,18 @@ def main() -> None:
         parser.error("--enforce-blacklist needs --accounts: without accounts there are no "
                      "groups, and a blacklist would have nobody to apply to")
 
+    if args.flow_accounting:
+        # Said at startup rather than discovered later from totals that look
+        # plausible but are a sample. Not fatal: capture still works, and the
+        # counters it produces are the ones this would have replaced.
+        from .flow_accounting import accounting_status
+
+        available, message = accounting_status()
+        if not available:
+            print(f"[activitygraph] Warning: --flow-accounting is not usable: {message}. "
+                  "Byte totals will come from the capture filter, so they undercount.",
+                  file=sys.stderr)
+
     if args.arp_sweep and args.demo:
         print("[activitygraph] Warning: --arp-sweep has no effect in --demo mode (no real interface to sweep).",
               file=sys.stderr)
@@ -625,7 +646,8 @@ def main() -> None:
             # No exclude_macs here: it belongs to the device registry, which
             # the pipeline above already owns.
             capture = BackgroundCapture(pipeline, interface=args.interface, history_store=history_store, arp_sweep=args.arp_sweep, arp_sweep_subnet=args.arp_sweep_subnet, arp_sweep_timeout=args.arp_sweep_timeout, router_devices=args.router_devices, router_credentials=args.router_credentials, dhcp_leases=args.dhcp_leases, bpf_filter=capture_filter,
-                                        accounts=accounts, enforce_blacklist=args.enforce_blacklist)
+                                        accounts=accounts, enforce_blacklist=args.enforce_blacklist,
+                                        flow_accounting=args.flow_accounting)
             try:
                 capture.start()
             except PermissionError:

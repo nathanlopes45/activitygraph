@@ -4,6 +4,26 @@ Notable changes, newest first. Dates are when the work landed on `main`.
 
 ## Unreleased
 
+### Added
+
+- **`--flow-accounting`**: exact per-flow byte counts and liveness taken
+  from the kernel's connection tracker instead of from the packets that got
+  past the capture filter. The Pi already does NAT, so every packet is
+  already counted by code that sees it anyway; reading that table costs one
+  pass over open connections rather than one pass over packets. Makes light
+  mode exact rather than sampled, without the throughput cost of full
+  capture. Needs `net.netfilter.nf_conntrack_acct=1`, and says so at
+  startup when it is missing.
+
+### Changed
+
+- **A daily limit now blocks embedded content too**, matching a blacklist.
+  Sparing embed hosts was what let the apps keep working, since an app and
+  an embed use the same hosts. The two features now differ in what triggers
+  them, not in what they reach.
+- `youtube-nocookie.com` is classified as YouTube. It was absent entirely,
+  so it was unlabelled in the dashboard as well as unblockable.
+
 ### Fixed
 
 - **Blocking had no effect on a network with IPv6.** Every rule matched

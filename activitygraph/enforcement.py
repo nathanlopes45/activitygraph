@@ -41,8 +41,7 @@ MAX_ADDRESSES_PER_GROUP = 4096
 
 
 def addresses_for_patterns(patterns: Iterable[str], dns_cache: dict,
-                           whole_service: bool = False,
-                           exclude_embeds: bool = False) -> list[str]:
+                           whole_service: bool = False) -> list[str]:
     """Every learned address belonging to one of these domains.
 
     Matches a domain and its subdomains, so blocking "tiktok.com" also
@@ -57,14 +56,14 @@ def addresses_for_patterns(patterns: Iterable[str], dns_cache: dict,
     stays narrow, because there the point is to stop the front door while
     leaving a video embedded in an article alone.
 
-    `exclude_embeds` is how a daily limit stays narrow now. It used to mean
-    "front doors only", which kept embeds working and the apps working too:
-    an Instagram limit blocked instagram.com while the feed carried on
-    loading from scontent-*.cdninstagram.com. A limit now covers the service
-    and subtracts the hosts that serve content inside other people's pages.
+    A daily limit resolves the same way. It used to spare the hosts that
+    serve embedded players and maps, which also left the apps working: an
+    Instagram limit blocked instagram.com while the feed carried on loading
+    from scontent-*.cdninstagram.com. Blocking embeds too is a deliberate
+    choice, so the limit reaches every way into the service.
     """
     from .accounts import SERVICE_PREFIX
-    from .service_rules import classify_domain, is_embed_host
+    from .service_rules import classify_domain
 
     wanted, services = set(), set()
     for raw in patterns or []:
@@ -91,8 +90,6 @@ def addresses_for_patterns(patterns: Iterable[str], dns_cache: dict,
     for address, hostname in dns_cache.items():
         name = (hostname or "").strip().lower().rstrip(".")
         if not name:
-            continue
-        if exclude_embeds and is_embed_host(name):
             continue
         hit = any(name == w or name.endswith("." + w) for w in wanted)
         if not hit and services:
@@ -158,14 +155,13 @@ def render_ruleset(groups: Iterable[dict], device_addresses: dict,
         if not sources_v4 and not sources_v6:
             continue  # a list with no devices to apply it to blocks nothing
 
-        # A blacklist covers the whole service, including the hosts an app
-        # streams from. A spent daily limit covers the service too, minus
-        # the hosts that serve content inside other people's pages, so an
-        # embedded video or a map on a shop's page keeps working.
+        # A blacklist and a spent daily limit now cover the same ground: the
+        # whole service, including the hosts an app streams from and the
+        # ones that serve it embedded in somebody else's page. The two
+        # differ in what triggers them, not in what they reach.
         resolved = set(addresses_for_patterns(patterns, dns_cache, whole_service=True))
         resolved |= set(addresses_for_patterns(
-            group.get("quota_patterns") or [], dns_cache,
-            whole_service=True, exclude_embeds=True))
+            group.get("quota_patterns") or [], dns_cache, whole_service=True))
         dest_v4, dest_v6 = _split_families(resolved)
         if not dest_v4 and not dest_v6:
             continue  # nothing resolved yet; a rule with an empty set is noise

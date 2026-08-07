@@ -736,6 +736,35 @@ Accounts and their session key live under `~/.activitygraph/` by default
 signs everyone out. Passwords are stored as salted PBKDF2-HMAC-SHA256 hashes,
 never in plaintext.
 
+### Exact byte totals without the throughput cost
+
+Inspecting every packet in Python costs a Pi 4B most of its throughput
+(measured: 15 Mbps of a 110 Mbps line). Filtering in the kernel keeps the
+line fast but makes byte totals a sample, and lets a quiet flow be timed out
+while it is still open, which understates time.
+
+Both problems assume the only way to know about a packet is to look at it.
+On a gateway that is not true. The Pi already does NAT, so the kernel's
+connection tracker holds an entry for every flow with exact counters for
+both directions: every packet is already counted, by code that sees them
+anyway. `--flow-accounting` reads that table every few seconds, which costs
+one pass over open connections rather than one pass over packets.
+
+```bash
+sudo sysctl -w net.netfilter.nf_conntrack_acct=1   # counters are off by default
+sudo .venv/bin/python -m activitygraph.main --serve --serve-source live \
+  -i eth1 --capture-mode light --flow-accounting
+```
+
+The two sources divide cleanly: capture says *what* a flow is (DNS, SNI, the
+Host header), conntrack says *how much* and *how recently*. Counter movement
+rather than mere presence is what marks a flow alive, because conntrack
+holds an established TCP entry for days after its last packet and trusting
+presence would overstate time as badly as sampling understates it.
+
+`/api/health` reports whether the counters are being read, so totals that
+look exact can be told apart from totals that are a sample.
+
 ## Changelog
 
 Notable changes are in [CHANGELOG.md](CHANGELOG.md).

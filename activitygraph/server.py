@@ -660,6 +660,7 @@ class BackgroundCapture:
         bpf_filter: Optional[str] = None,
         accounts=None,
         enforce_blacklist: bool = False,
+        flow_accounting: bool = False,
     ) -> None:
         from .collector import TrafficCollector
 
@@ -686,6 +687,9 @@ class BackgroundCapture:
         self._enforcement: dict = {"enabled": enforce_blacklist, "applied": None,
                                    "message": "no refresh has run yet", "groups": []}
         self._capture_error: Optional[str] = None
+        self.flow_accounting = flow_accounting
+        self._accounting = {"enabled": flow_accounting, "flows_updated": 0,
+                            "message": "no poll has run yet"}
 
     def start(self) -> None:
         # Blocking, but only ever a few seconds -- run before the capture
@@ -752,6 +756,9 @@ class BackgroundCapture:
             "capture_alive": self.capture_alive,
             "capture_restarts": self._capture_restarts,
             "last_capture_error": self._capture_error,
+            # Byte totals are a sample without this, so a dashboard showing
+            # exact-looking numbers should be able to say which it is.
+            "flow_accounting": self.accounting_status(),
         }
 
     def _flush_loop(self) -> None:
@@ -764,6 +771,9 @@ class BackgroundCapture:
                 from .dhcp_leases import ingest_leases
 
                 ingest_leases(self.pipeline, self.dhcp_leases or None, announce=False)
+            # Before flush_idle, so a flow the kernel says is still moving
+            # is not timed out on the same tick that proves it is alive.
+            self._poll_flow_accounting()
             self.pipeline.flows.flush_idle()
             for flow in self.pipeline.flows.closed_flows():
                 if flow.service is None:
@@ -778,6 +788,34 @@ class BackgroundCapture:
                 # than per DNS answer to keep disk writes off the capture path.
                 self.pipeline.services.flush()
             self._refresh_blacklist()
+
+    def _poll_flow_accounting(self) -> None:
+        """Fold the kernel's exact byte counters into the open flows.
+
+        Costs one read of a table sized by open connections, not by packets,
+        which is the whole point: the counters cover every packet without
+        any of them being copied to userspace.
+        """
+        if not self.flow_accounting:
+            return
+        from .flow_accounting import accounting_status, read_flows
+
+        entries = read_flows()
+        if not entries:
+            available, message = accounting_status()
+            self._accounting = {"enabled": True, "available": available,
+                                "flows_updated": 0, "message": message}
+            return
+
+        moved = self.pipeline.flows.apply_accounting(entries)
+        self._accounting = {
+            "enabled": True, "available": True, "tracked_flows": len(entries),
+            "flows_updated": moved,
+            "message": f"{moved} of {len(entries)} tracked flows moved bytes",
+        }
+
+    def accounting_status(self) -> dict:
+        return dict(self._accounting)
 
     def _refresh_blacklist(self) -> None:
         """Rebuild the firewall rules from the current lists and DNS cache.
@@ -836,7 +874,7 @@ class BackgroundCapture:
                                            whole_service=True))
                     | set(addresses_for_patterns(
                         g.get("quota_patterns") or [], dns_cache,
-                        whole_service=True, exclude_embeds=True))),
+                        whole_service=True))),
             } for g in groups],
         }
 

@@ -90,7 +90,16 @@ def test_capture_loop_backoff_grows_but_is_capped():
 def test_status_reports_capture_health():
     capture = _capture()
     status = capture.status()
-    assert status == {"capture_alive": False, "capture_restarts": 0, "last_capture_error": None}
+    assert status["capture_alive"] is False
+    assert status["capture_restarts"] == 0
+    assert status["last_capture_error"] is None
+
+
+def test_status_says_whether_byte_totals_are_exact_or_sampled():
+    """Without flow accounting the totals come from whatever got past the
+    capture filter, so a dashboard showing exact-looking numbers should be
+    able to say which it is."""
+    assert _capture().status()["flow_accounting"]["enabled"] is False
 
 
 def test_capture_alive_reflects_running_thread():

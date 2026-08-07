@@ -681,7 +681,7 @@ cd ~/activitygraph
 sudo .venv/bin/python -m activitygraph.main \\
   --serve --serve-source live -i eth1 \\
   --host 0.0.0.0 --no-browser \\
-  --capture-mode light --dhcp-leases \\
+  --capture-mode light --flow-accounting --dhcp-leases \\
   --accounts ~/activitygraph/accounts.db \\
   --history-db ~/activitygraph/history.db
 """)
@@ -734,7 +734,20 @@ table([
      "and measured throughput falls to about 15 Mbps. The same line measures "
      "about 100 Mbps in light mode, which inspects only "
      "what identifies devices, services and flow timing. Categories and time "
-     "stay accurate; byte totals become an undercount."],
+     "stay accurate; byte totals are a sample unless you add the flag below."],
+    ["<font face='Courier'>--flow-accounting</font>",
+     "Makes the byte totals exact without giving up the throughput. Both "
+     "problems come from assuming the only way to know about a packet is to "
+     "look at it, and here that is not true: the Pi already does NAT, so the "
+     "kernel's connection tracker holds an entry per flow with exact counters "
+     "for both directions. Every packet is already counted, by code that sees "
+     "them anyway, so reading that table every few seconds costs one pass "
+     "over open connections rather than one pass over packets. It also fixes "
+     "durations, because a flow whose counters moved is known to be alive "
+     "rather than inferred from a sampled packet. Counters are off by "
+     "default; turn them on with "
+     "<font face='Courier'>sysctl -w net.netfilter.nf_conntrack_acct=1</font>. "
+     "Without them the service still runs and says so at startup."],
     ["<font face='Courier'>--history-db</font>",
      "Records activity over time, and stores hostnames learned from DNS so "
      "the service breakdown survives a reboot. A durable record of what "
@@ -873,7 +886,7 @@ Wants=network-online.target
 Type=simple
 User=root
 WorkingDirectory=$AG
-ExecStart=$AG/.venv/bin/python -m activitygraph.main --serve --serve-source live -i eth1 --host 0.0.0.0 --no-browser --capture-mode light --active-within 15 --enforce-blacklist --accounts $AG/accounts.db --dhcp-leases --history-db $AG/history.db
+ExecStart=$AG/.venv/bin/python -m activitygraph.main --serve --serve-source live -i eth1 --host 0.0.0.0 --no-browser --capture-mode light --flow-accounting --active-within 15 --enforce-blacklist --accounts $AG/accounts.db --dhcp-leases --history-db $AG/history.db
 Restart=always
 RestartSec=10
 
@@ -940,8 +953,14 @@ table([
      "reaching the Pi, which --capture-mode light allows. Check Settings &gt; "
      "General &gt; About &gt; Name, or override it with --device-aliases."],
     ["Time in categories looks too low",
-     "Flows are kept alive by a sampled fraction of packets in light mode. "
-     "If durations still look short, raise --idle-timeout."],
+     "Without --flow-accounting, flows are kept alive by a sampled fraction "
+     "of packets in light mode, so a quiet flow can be timed out while it is "
+     "still open. Add the flag; if durations still look short, raise "
+     "--idle-timeout."],
+    ["Byte totals look too low",
+     "Expected in light mode without --flow-accounting. Check /api/health: "
+     "flow_accounting.message says whether the kernel counters are being "
+     "read, and names the fix if they are not."],
     ["No IPv6 traffic at all",
      "Expected. The LAN is single-stack by design. See Phase 4.1."],
 ], [58 * mm, 107 * mm])
@@ -997,8 +1016,9 @@ bullets([
     "4B on a 110 Mbps line: --capture-mode full gives about 15 Mbps, and "
     "--capture-mode light about 100 Mbps. Python cannot dissect 13,000 "
     "packets a second, and the pegged CPU starves the kernel forwarding "
-    "path. Light mode avoids this by not looking at payload, at the cost "
-    "of exact byte totals. Time in categories is unaffected.",
+    "path. Light mode avoids this by not looking at payload, and "
+    "--flow-accounting then restores exact byte totals by reading the "
+    "counters the kernel already keeps. Time in categories is unaffected.",
     "<b>Device-to-device traffic may bypass the Pi.</b> A phone casting to a "
     "TV, where both sit on router 2, is switched locally and never reaches "
     "the gateway. Only traffic crossing the Pi is visible.",

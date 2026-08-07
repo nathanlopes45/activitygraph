@@ -251,27 +251,20 @@ def test_a_spent_limit_names_the_service_not_a_domain():
 
 def quota_addresses(services, dns):
     """The addresses a spent limit actually blocks."""
-    return addresses_for_patterns(quota_patterns(services), dns,
-                                  whole_service=True, exclude_embeds=True)
+    return addresses_for_patterns(quota_patterns(services), dns, whole_service=True)
 
 
 @pytest.mark.parametrize("host", [
     "youtube-nocookie.com",           # the embed-only domain
-    "rr3---sn-abc.googlevideo.com",   # the stream, embedded or not
-    "i.ytimg.com",                    # thumbnails inside an embedded player
+    "rr3---sn-abc.googlevideo.com",   # where the video actually comes from
+    "i.ytimg.com",                    # thumbnails
 ])
-def test_a_limit_leaves_the_embedded_player_working(host):
-    """A limit on watching YouTube must not break a video embedded in an
-    article. Over TLS the path is invisible, so youtube.com/watch and
-    youtube.com/embed cannot be told apart. Which hosts each uses can."""
-    assert quota_addresses(["YouTube"], {"5.5.5.5": host}) == []
-
-
-@pytest.mark.parametrize("host", ["maps.googleapis.com", "maps.gstatic.com"])
-def test_a_limit_leaves_an_embedded_map_working(host):
-    """A shop's contact page loads a map from the API host. Blocking it
-    would break a page nobody meant to restrict."""
-    assert quota_addresses(["Google Maps"], {"5.5.5.5": host}) == []
+def test_a_limit_reaches_every_way_into_the_service(host):
+    """Embeds are blocked too, by choice. Sparing them was what let the app
+    keep working: over TLS the hostname is visible but the path is not, so
+    the only thing separating a watched video from an embedded one was the
+    host it came from, and the app used the same hosts as the embed."""
+    assert quota_addresses(["YouTube"], {"5.5.5.5": host}) == ["5.5.5.5"]
 
 
 def test_a_limit_reaches_the_app_not_just_the_website():
@@ -305,13 +298,13 @@ def test_a_spent_limit_reaches_the_app_in_the_rendered_ruleset():
     assert "3.3.3.3" in script, "the CDN the feed actually loads from"
 
 
-def test_a_spent_limit_still_spares_embeds_in_the_rendered_ruleset():
+def test_a_spent_limit_reaches_the_stream_host_in_the_rendered_ruleset():
     """The other half of the same wiring, so neither can regress alone."""
     script = spent_limit_script(["YouTube"], {
         "1.1.1.1": "youtube.com",
         "2.2.2.2": "rr3---sn-abc.googlevideo.com"})
     assert "1.1.1.1" in script
-    assert "2.2.2.2" not in script, "an embedded player would stop working"
+    assert "2.2.2.2" in script, "where the video actually comes from"
 
 
 def test_a_service_with_no_known_front_door_is_never_blocked():
@@ -352,24 +345,13 @@ def test_blocking_a_site_covers_the_hosts_its_app_uses():
     assert "4.4.4.4" in found, "the app's own API"
 
 
-def test_a_daily_limit_still_spares_the_embed_hosts():
-    """The opposite requirement, and why the two are resolved differently: a
-    limit must leave a video embedded in an article playing."""
-    narrow = quota_addresses(["YouTube"], APP_DNS)
-    assert "2.2.2.2" not in narrow, "googlevideo serves embedded players"
-    assert "3.3.3.3" not in narrow, "ytimg serves an embedded player's thumbnails"
-    assert "1.1.1.1" in narrow, "the site itself is the point of the limit"
-    # The app's own API. Blocking it is what stops the app rather than only
-    # the website, and it is not what an embedded iframe player calls.
-    assert "4.4.4.4" in narrow
-
-
-def test_a_blacklist_is_wider_than_a_limit():
-    """The distinction the whole design rests on, asserted in one place."""
+def test_a_limit_and_a_blacklist_reach_the_same_hosts():
+    """They differ in what triggers them, not in what they cover. Keeping
+    two scopes was what made a limit look like it did nothing."""
     wide = addresses_for_patterns(["service:YouTube"], APP_DNS, whole_service=True)
-    narrow = quota_addresses(["YouTube"], APP_DNS)
-    assert set(narrow) < set(wide)
-    assert "2.2.2.2" in wide, "a blacklist means all of it, including the stream"
+    assert quota_addresses(["YouTube"], APP_DNS) == wide
+    assert "2.2.2.2" in wide, "the host the app streams from"
+    assert "9.9.9.9" not in wide, "and nothing outside the service"
 
 
 def test_blocking_one_service_does_not_reach_another():

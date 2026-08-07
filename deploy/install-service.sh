@@ -33,6 +33,19 @@ echo "Wrote $UNIT:"
 grep ExecStart "$UNIT"
 echo
 
+# --flow-accounting reads the kernel's per-flow byte counters, which are not
+# kept unless this is on. Reported rather than set: it is a system-wide
+# setting and changing it silently from an installer is not this script's
+# call. Without it the service still runs, with sampled byte totals.
+if [[ -r /proc/sys/net/netfilter/nf_conntrack_acct ]] \
+   && [[ "$(cat /proc/sys/net/netfilter/nf_conntrack_acct)" != "1" ]]; then
+    echo "Note: per-flow byte accounting is off, so byte totals will be a sample."
+    echo "To turn it on now and at every boot:"
+    echo "    sudo sysctl -w net.netfilter.nf_conntrack_acct=1"
+    echo "    echo 'net.netfilter.nf_conntrack_acct=1' | sudo tee /etc/sysctl.d/99-activitygraph.conf"
+    echo
+fi
+
 systemctl daemon-reload
 systemctl enable activitygraph >/dev/null
 systemctl restart activitygraph

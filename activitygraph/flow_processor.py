@@ -47,6 +47,39 @@ class FlowProcessor:
         flow.end_time = packet.timestamp
         return flow
 
+    def apply_accounting(self, entries, now: Optional[datetime] = None) -> int:
+        """Replace observed counters with the kernel's exact ones.
+
+        `entries` are ConntrackFlows. Returns how many flows moved, which is
+        what the diagnostics report.
+
+        Two rules, both learned the hard way:
+
+        Counters only ever go up, so a smaller number means conntrack has
+        recycled the entry for a new connection on the same 5-tuple. Taking
+        it would make a flow appear to shrink.
+
+        A flow counts as alive only when its counters *moved* since the last
+        poll. Presence is not evidence: conntrack holds an established TCP
+        entry for days after its last packet, so treating presence as
+        liveness would overstate time as badly as sampling understates it.
+        """
+        now = now or datetime.now(timezone.utc)
+        moved = 0
+        for entry in entries:
+            for key, packets, byte_count in entry.directions():
+                flow = self._open_flows.get(key)
+                if flow is None or byte_count is None:
+                    continue
+                if byte_count <= flow.byte_count:
+                    continue
+                flow.byte_count = byte_count
+                if packets is not None:
+                    flow.packet_count = packets
+                flow.end_time = now
+                moved += 1
+        return moved
+
     def flush_idle(self, now: Optional[datetime] = None) -> list[Flow]:
         """Finalize flows that have been idle past the timeout. Returns them."""
         now = now or datetime.now(timezone.utc)

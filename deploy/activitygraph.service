@@ -18,7 +18,7 @@ Wants=network-online.target
 Type=simple
 User=root
 WorkingDirectory=__PROJECT_ROOT__
-ExecStart=__PROJECT_ROOT__/.venv/bin/python -m activitygraph.main --serve --serve-source live -i eth1 --host 0.0.0.0 --no-browser --capture-mode light --active-within 15 --enforce-blacklist --dhcp-leases --accounts __PROJECT_ROOT__/accounts.db --history-db __PROJECT_ROOT__/history.db
+ExecStart=__PROJECT_ROOT__/.venv/bin/python -m activitygraph.main --serve --serve-source live -i eth1 --host 0.0.0.0 --no-browser --capture-mode light --flow-accounting --active-within 15 --enforce-blacklist --dhcp-leases --accounts __PROJECT_ROOT__/accounts.db --history-db __PROJECT_ROOT__/history.db
 Restart=always
 RestartSec=10
 

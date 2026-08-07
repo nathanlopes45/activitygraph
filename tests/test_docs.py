@@ -98,8 +98,8 @@ def test_the_unit_runs_what_the_runbook_recommends():
     silently reverts. This is the reason it lives in the repository."""
     exec_line = [line for line in UNIT.read_text(encoding="utf-8").splitlines()
                  if line.startswith("ExecStart")][0]
-    for flag in ["--capture-mode light", "--active-within 15", "--enforce-blacklist",
-                 "--dhcp-leases", "--accounts", "--history-db"]:
+    for flag in ["--capture-mode light", "--flow-accounting", "--active-within 15",
+                 "--enforce-blacklist", "--dhcp-leases", "--accounts", "--history-db"]:
         assert flag in exec_line, f"the deployed unit would run without {flag}"
 
 

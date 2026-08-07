@@ -585,6 +585,7 @@ sudo .venv/bin/python -m activitygraph.main \
   --serve --serve-source live -i eth1 \
   --host 0.0.0.0 --no-browser \
   --capture-mode light \
+  --flow-accounting \
   --dhcp-leases \
   --accounts ~/activitygraph/accounts.db \
   --history-db ~/activitygraph/history.db
@@ -609,9 +610,28 @@ sudo .venv/bin/python -m activitygraph.main \
   drops to around 15 Mbps. The same line measures about 100 Mbps with
   `--capture-mode light`. Light mode inspects only what identifies
   devices, services and flow timing, and skips the payload that makes up
-  the bulk of the packets. Categories and time stay accurate; byte totals
-  become an undercount. If you want exact bytes and can accept the
-  throughput cost, use `--capture-mode full`.
+  the bulk of the packets. Categories and time stay accurate. Byte totals
+  are a sample unless you add `--flow-accounting`, below.
+- `--flow-accounting` makes the byte totals exact without giving up the
+  throughput. Both problems come from assuming the only way to know about a
+  packet is to look at it, and on this Pi that is not true: it already does
+  NAT, so the kernel's connection tracker holds an entry per flow with exact
+  counters for both directions. Every packet is therefore already counted,
+  by code that sees them anyway. Reading that table every few seconds costs
+  one pass over open connections rather than one pass over packets. It also
+  fixes durations, because a flow whose counters moved is known to be alive
+  rather than inferred to be from a sampled packet. Needs connection
+  tracking, which a gateway has, and byte counters, which are off by
+  default:
+
+  ```bash
+  sudo sysctl -w net.netfilter.nf_conntrack_acct=1
+  echo 'net.netfilter.nf_conntrack_acct=1' | sudo tee /etc/sysctl.d/99-activitygraph.conf
+  ```
+
+  Without it the service still runs and says so on startup, with sampled
+  byte totals. `--capture-mode full` remains the alternative, at the
+  throughput cost.
 - `--dhcp-leases` learns a name for every device in the lease table. With no
   value it probes the usual dnsmasq locations; pass a path to override. It
   learns names only: a lease records an address handed out and outlives the
@@ -784,7 +804,7 @@ Wants=network-online.target
 Type=simple
 User=root
 WorkingDirectory=$AG
-ExecStart=$AG/.venv/bin/python -m activitygraph.main --serve --serve-source live -i eth1 --host 0.0.0.0 --no-browser --capture-mode light --active-within 15 --enforce-blacklist --accounts $AG/accounts.db --dhcp-leases --history-db $AG/history.db
+ExecStart=$AG/.venv/bin/python -m activitygraph.main --serve --serve-source live -i eth1 --host 0.0.0.0 --no-browser --capture-mode light --flow-accounting --active-within 15 --enforce-blacklist --accounts $AG/accounts.db --dhcp-leases --history-db $AG/history.db
 Restart=always
 RestartSec=10
 
@@ -884,7 +904,8 @@ If the phone shows 0m, work through these in order:
 | Everyone logged out after a reboot | The session key moved or was deleted. With `--accounts PATH` it lives beside that path |
 | No IPv6 anywhere | Expected. The LAN is single-stack by design; see step 4 |
 | A phone shows as "iPhone" rather than its real name | iOS sends a generic hostname over DHCP, so the chosen name comes from Bonjour instead. That needs mDNS (UDP 5353) reaching the Pi, which `--capture-mode light` allows. Check Settings > General > About > Name, or override with `--device-aliases` |
-| Time in categories looks too low | Flows are kept alive by a sampled fraction of packets in light mode. If durations still look short, raise `--idle-timeout` |
+| Time in categories looks too low | Without `--flow-accounting`, flows are kept alive by a sampled fraction of packets in light mode, so a quiet flow can be timed out while still open. Add the flag; if durations still look short, raise `--idle-timeout` |
+| Byte totals look too low | Expected in light mode without `--flow-accounting`. Check `/api/health`: `flow_accounting.message` says whether the kernel counters are being read, and names the fix if not |
 
 ### Wi-Fi appears, but devices get no internet
 
@@ -975,8 +996,10 @@ captured normally.
   a 110 Mbps line: `--capture-mode full` gives about 15 Mbps, and
   `--capture-mode light` about 100 Mbps. Python cannot dissect 13,000
   packets a second, and the pegged CPU starves the kernel's forwarding
-  path. Light mode avoids this by not looking at payload, at the cost of
-  exact byte totals. Time in categories is unaffected either way.
+  path. Light mode avoids this by not looking at payload. `--flow-accounting`
+  then restores exact byte totals by reading the counters the kernel already
+  keeps, which costs one pass over open connections rather than one pass
+  over packets. Time in categories is unaffected either way.
 - **Device-to-device traffic may bypass the Pi.** A phone casting to a TV
   where both sit on the same access point is switched locally and never
   reaches the gateway. Only traffic crossing the Pi is visible.
