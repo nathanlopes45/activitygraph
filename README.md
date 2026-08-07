@@ -25,6 +25,10 @@ connect to an access point with DHCP switched off, which feeds the Pi on
 eth1, which forwards out of eth0 through the modem to the
 internet](docs/images/gateway.png)
 
+More views, including per-person totals, daily limits and trends over time:
+[docs/screenshots.md](docs/screenshots.md). Two images live here on purpose;
+the rest are one click away.
+
 ## What it does
 
 - **Traffic Collector** (`collector.py`): captures live packets with `scapy`,
