@@ -456,6 +456,29 @@
     line-height: 1.45;
     margin-bottom: 14px;
   }
+  /* A group heading in the admin view, and the line that says the group has
+     nothing set. Both were bare divs carrying classes that only take effect
+     inside a .claimed-device row, so each fell back to the body font and the
+     two ran together as one block of identical text. */
+  .limit-group {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 16px 0 4px;
+  }
+  .limit-group:first-child { margin-top: 0; }
+  .limit-empty {
+    font-family: var(--mono);
+    font-size: 10px;
+    font-style: italic;
+    letter-spacing: 0.03em;
+    color: var(--text-muted);
+    /* Indented against a hairline, so it reads as belonging to the heading
+       above rather than as another heading. */
+    padding: 3px 0 6px 12px;
+    border-left: 1px solid var(--border-soft);
+    margin-left: 3px;
+  }
   .limit-error {
     color: var(--amber);
     font-size: 12px;
@@ -1786,7 +1809,7 @@ async function refreshLimits() {
     (blocked.groups || []).forEach(g => { blockedByUser[g.user_id] = g.patterns || []; });
 
     (quotas.groups || []).forEach(g => {
-      container.appendChild(el("div", { class: "cd-name" }, g.group));
+      container.appendChild(el("div", { class: "limit-group" }, g.group));
       // g.user_id is what makes Remove act on this group rather than on the
       // admin's own empty list.
       (g.limits || []).forEach(row =>
@@ -1808,7 +1831,7 @@ async function refreshLimits() {
       });
 
       if (!(g.limits || []).length && !(blockedByUser[g.user_id] || []).length) {
-        container.appendChild(el("div", { class: "cd-meta" }, "nothing set"));
+        container.appendChild(el("div", { class: "limit-empty" }, "nothing set"));
       }
     });
     // The admin view returns early, so without this a refused change had
