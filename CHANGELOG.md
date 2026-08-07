@@ -2,6 +2,15 @@
 
 Notable changes, newest first. Dates are when the work landed on `main`.
 
+## Unreleased
+
+### Changed
+
+- CI pins `actions/checkout@v7` and `actions/setup-python@v7`. The previous
+  tags declared node20, which GitHub has retired, so every run was annotated
+  with a deprecation warning.
+- The README carries a build badge and describes what CI actually runs.
+
 ## 1.0.0
 
 The point at which the project does the thing it set out to do: show a

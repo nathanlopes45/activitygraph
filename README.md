@@ -1,5 +1,7 @@
 # ActivityGraph
 
+[![tests](https://github.com/nathanlopes45/activitygraph/actions/workflows/tests.yml/badge.svg)](https://github.com/nathanlopes45/activitygraph/actions/workflows/tests.yml)
+
 > Understand your digital life.
 
 ActivityGraph turns the traffic on your own network into an answer to a
@@ -748,6 +750,18 @@ pytest
 Pytest configuration lives in `pyproject.toml`, so `pytest` alone is enough.
 Two tests are skipped on Windows -- they assert POSIX file-permission
 behaviour that has no equivalent there.
+
+### Continuous integration
+
+[`.github/workflows/tests.yml`](.github/workflows/tests.yml) runs on every
+push to `main` and on every pull request, against Python 3.11 and 3.13. The
+floor is what `pyproject.toml` requires; the ceiling is what a current
+Raspberry Pi OS image ships, which is where this actually runs. Each job
+installs `libpcap-dev` first, because without it the BPF filter tests skip
+rather than fail, and CI would quietly stop covering the rules that decide
+what the gateway drops. It then lints with `pyflakes`, runs the suite, and
+rebuilds the gateway runbook PDF, so a change that breaks the builder
+surfaces immediately rather than the next time somebody regenerates it.
 
 ## Security and privacy
 

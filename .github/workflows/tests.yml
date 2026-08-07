@@ -19,9 +19,13 @@ jobs:
         python-version: ["3.11", "3.13"]
 
     steps:
-      - uses: actions/checkout@v4
+      # Both declare node24. The older v4/v5 tags still ran, but they declare
+      # node20, which GitHub has retired: it forces them onto node24 anyway
+      # and annotates every run with a deprecation warning. Pinning forward
+      # is the quiet option as well as the correct one.
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip

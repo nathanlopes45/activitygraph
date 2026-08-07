@@ -111,6 +111,32 @@ def test_the_unit_carries_no_machine_specific_path():
     assert "/home/" not in text
 
 
+def test_the_readme_names_the_versions_ci_actually_tests():
+    """The README tells a reader which Python versions are supported, and
+    the matrix decides it. Widening or dropping one is a config edit nobody
+    thinks of as a documentation change, so the claim goes stale silently."""
+    workflow = (DOCS.parent / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+    matrix = re.search(r"python-version:\s*\[([^\]]+)\]", workflow)
+    assert matrix, "no python-version matrix found in the workflow"
+
+    versions = re.findall(r"\d+\.\d+", matrix.group(1))
+    readme = (DOCS.parent / "README.md").read_text(encoding="utf-8")
+    section = readme.split("### Continuous integration", 1)
+    assert len(section) == 2, "the README no longer describes CI"
+    for version in versions:
+        assert version in section[1], f"CI tests Python {version}; the README does not say so"
+
+
+def test_ci_uses_actions_that_are_not_retired():
+    """A retired node runtime does not fail the build, it annotates it. That
+    is easy to leave in place until the runtime is removed outright and every
+    job breaks at once."""
+    workflow = (DOCS.parent / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+    stale = {"actions/checkout@v4": "declares node20", "actions/setup-python@v5": "declares node20"}
+    for action, why in stale.items():
+        assert action not in workflow, f"{action} {why}"
+
+
 def test_the_installer_is_executable_and_refuses_without_root():
     text = (DOCS.parent / "deploy" / "install-service.sh").read_text(encoding="utf-8")
     assert "set -euo pipefail" in text
