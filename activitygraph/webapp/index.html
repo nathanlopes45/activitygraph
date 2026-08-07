@@ -1698,7 +1698,11 @@ function showLimitError(message) {
   if (box) box.textContent = message;
 }
 
-function limitRow(row, onChange) {
+// `owner` is the user whose limit this is, needed only in the admin view.
+// Without it the admin's Remove button posted no user_id, the server read
+// that as "my own", and it cheerfully deleted a limit the admin did not
+// have while the group's limit stayed exactly where it was.
+function limitRow(row, onChange, owner) {
   const spent = row.used_seconds >= row.daily_seconds;
   const line = el("div", { class: "claimed-device" });
   const left = el("div", {});
@@ -1714,7 +1718,15 @@ function limitRow(row, onChange) {
 
   const remove = el("button", { class: "btn", type: "button" }, "Remove");
   remove.addEventListener("click", async () => {
-    await postJSON("/api/quotas", { service: row.service, minutes: 0 });
+    const payload = { service: row.service, minutes: 0 };
+    if (owner !== undefined && owner !== null) payload.user_id = owner;
+    // The result was thrown away, so a refusal looked identical to a
+    // success: the row simply reappeared on the next refresh.
+    const { ok, data } = await postJSON("/api/quotas", payload);
+    if (!ok) {
+      showLimitError(data.error || data.detail || "Could not remove that limit.");
+      return;
+    }
     onChange();
   });
   line.appendChild(remove);
@@ -1775,7 +1787,10 @@ async function refreshLimits() {
 
     (quotas.groups || []).forEach(g => {
       container.appendChild(el("div", { class: "cd-name" }, g.group));
-      (g.limits || []).forEach(row => container.appendChild(limitRow(row, refreshLimits)));
+      // g.user_id is what makes Remove act on this group rather than on the
+      // admin's own empty list.
+      (g.limits || []).forEach(row =>
+        container.appendChild(limitRow(row, refreshLimits, g.user_id)));
 
       (blockedByUser[g.user_id] || []).forEach(pattern => {
         const line = el("div", { class: "claimed-device" });
@@ -1796,6 +1811,9 @@ async function refreshLimits() {
         container.appendChild(el("div", { class: "cd-meta" }, "nothing set"));
       }
     });
+    // The admin view returns early, so without this a refused change had
+    // nowhere to report itself.
+    container.appendChild(el("div", { class: "limit-error", id: "limit-error" }));
     return;
   }
 

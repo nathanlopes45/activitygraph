@@ -26,6 +26,18 @@ Notable changes, newest first. Dates are when the work landed on `main`.
 
 ### Fixed
 
+- **Removing a daily limit from the admin panel did nothing.** The page sent
+  no `user_id`, so the server read the request as "my own limits" and
+  deleted one the admin did not have while the group's limit stayed put. The
+  response was 200 and the page discarded it, so a refusal and a success
+  looked the same and the row simply reappeared. The admin view now names
+  the group it is acting on, and reports a refusal instead of swallowing it.
+- **The account store is now serialised.** It is opened with
+  `check_same_thread=False` and used by request handlers and the background
+  pass at the same time, which sqlite3 permits but does not make safe: a
+  read interleaved with another thread's write can raise, and a failure
+  inside a request handler reaches the person as suddenly not being signed
+  in.
 - **Claiming a device never put it in its owner's group.** The name people
   chose was applied, because it goes through the alias mechanism, so two
   devices claimed by the same person read "ryan's laptop" and "ryan's

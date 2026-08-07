@@ -24,6 +24,7 @@ leak information through how long it takes to fail.
 from __future__ import annotations
 
 import base64
+import functools
 import hashlib
 import hmac
 import json
@@ -31,6 +32,7 @@ import os
 import re
 import secrets
 import sqlite3
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -252,11 +254,33 @@ def read_token(token: str, secret: bytes, now: Optional[datetime] = None) -> Opt
 
 # -- account store ---------------------------------------------------------
 
+def _synchronised(method):
+    """Serialise one method against the shared connection.
+
+    The store is opened with check_same_thread=False and then used from two
+    threads at once: request handlers answering the dashboard, and the
+    background pass that re-applies names and groups and rebuilds the
+    firewall rules every few seconds. sqlite3 will not corrupt anything
+    under that, but a read interleaved with another thread's write can
+    raise, and a failure inside a request handler surfaces as a signed-in
+    person suddenly not being signed in.
+
+    Reentrant, because several of these methods call each other.
+    """
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return wrapper
+
+
 class AccountStore:
     """Users and their claimed devices, persisted alongside history."""
 
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
+        self._lock = threading.RLock()
         self._init_schema()
 
     def _init_schema(self) -> None:
@@ -314,9 +338,11 @@ class AccountStore:
         self._conn.commit()
 
     # -- users -------------------------------------------------------------
+    @_synchronised
     def user_count(self) -> int:
         return self._conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
 
+    @_synchronised
     def create_user(self, username: str, password: str,
                     group_name: Optional[str] = None) -> User:
         """Register an account. The first one created becomes the admin.
@@ -347,6 +373,7 @@ class AccountStore:
         return User(id=cur.lastrowid, username=username,
                     group_name=(group_name or f"{username}'s group").strip(), is_admin=is_admin)
 
+    @_synchronised
     def authenticate(self, username: str, password: str) -> Optional[User]:
         """Return the user on correct credentials, else None.
 
@@ -367,6 +394,7 @@ class AccountStore:
             return None
         return User(id=row[0], username=row[1], group_name=row[3], is_admin=bool(row[4]))
 
+    @_synchronised
     def get_user(self, user_id: int) -> Optional[User]:
         row = self._conn.execute(
             "SELECT id, username, group_name, is_admin FROM users WHERE id = ?", (user_id,)
@@ -375,6 +403,7 @@ class AccountStore:
             return None
         return User(id=row[0], username=row[1], group_name=row[2], is_admin=bool(row[3]))
 
+    @_synchronised
     def set_group_name(self, user_id: int, group_name: str) -> None:
         group_name = (group_name or "").strip()
         if not group_name:
@@ -383,6 +412,7 @@ class AccountStore:
         self._conn.commit()
 
     # -- claimed devices ---------------------------------------------------
+    @_synchronised
     def claim_device(self, user_id: int, mac: str, label: Optional[str] = None) -> None:
         """Attach a device to this user under a name they chose.
 
@@ -402,6 +432,7 @@ class AccountStore:
         )
         self._conn.commit()
 
+    @_synchronised
     def device_labels(self) -> dict:
         """Every claimed device's MAC mapped to "<owner>'s <name>".
 
@@ -417,6 +448,7 @@ class AccountStore:
 
     # -- blacklists --------------------------------------------------------
 
+    @_synchronised
     def add_blocked(self, user_id: int, pattern: str) -> str:
         """Add a domain to a group's blacklist. Returns the stored form.
 
@@ -436,6 +468,7 @@ class AccountStore:
         self._conn.commit()
         return cleaned
 
+    @_synchronised
     def remove_blocked(self, user_id: int, pattern: str) -> bool:
         cur = self._conn.execute(
             "DELETE FROM blacklist WHERE user_id = ? AND pattern = ?",
@@ -444,11 +477,13 @@ class AccountStore:
         self._conn.commit()
         return cur.rowcount > 0
 
+    @_synchronised
     def blocked_for(self, user_id: int) -> list:
         rows = self._conn.execute(
             "SELECT pattern FROM blacklist WHERE user_id = ? ORDER BY pattern", (user_id,))
         return [row[0] for row in rows]
 
+    @_synchronised
     def blocked_by_group(self) -> list:
         """Every group's list, for the admin view and for enforcement.
 
@@ -475,6 +510,7 @@ class AccountStore:
 
     # -- daily limits ------------------------------------------------------
 
+    @_synchronised
     def set_quota(self, user_id: int, service: str, daily_seconds: int) -> None:
         """Limit a service to this many seconds a day. Zero removes it."""
         service = (service or "").strip()
@@ -492,11 +528,13 @@ class AccountStore:
             )
         self._conn.commit()
 
+    @_synchronised
     def quotas_for(self, user_id: int) -> dict:
         rows = self._conn.execute(
             "SELECT service, daily_seconds FROM quotas WHERE user_id = ?", (user_id,))
         return {service: seconds for service, seconds in rows}
 
+    @_synchronised
     def all_quotas(self) -> dict:
         """Every group's limits, keyed by user id, for enforcement."""
         rows = self._conn.execute("SELECT user_id, service, daily_seconds FROM quotas")
@@ -505,6 +543,7 @@ class AccountStore:
             limits.setdefault(user_id, {})[service] = seconds
         return limits
 
+    @_synchronised
     def release_device(self, user_id: int, mac: str) -> bool:
         cur = self._conn.execute(
             "DELETE FROM claimed_devices WHERE device_mac = ? AND user_id = ?",
@@ -513,6 +552,7 @@ class AccountStore:
         self._conn.commit()
         return cur.rowcount > 0
 
+    @_synchronised
     def macs_for_user(self, user_id: int) -> set[str]:
         return {
             row[0] for row in self._conn.execute(
@@ -520,12 +560,14 @@ class AccountStore:
             )
         }
 
+    @_synchronised
     def owner_of(self, mac: str) -> Optional[int]:
         row = self._conn.execute(
             "SELECT user_id FROM claimed_devices WHERE device_mac = ?", (mac.upper(),)
         ).fetchone()
         return row[0] if row else None
 
+    @_synchronised
     def group_map(self) -> dict[str, str]:
         """MAC -> group name, for every claimed device."""
         return {
