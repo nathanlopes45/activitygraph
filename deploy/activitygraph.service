@@ -1,0 +1,26 @@
+; Reference unit for a Raspberry Pi gateway. Install it with:
+;
+;   sudo deploy/install-service.sh
+;
+; which fills in the paths and reloads systemd. Kept in the repository so
+; the flags a gateway should run with live somewhere version controlled: a
+; unit written once by hand drifts silently, and a reboot then quietly
+; reverts whatever was being tested by hand.
+;
+; __PROJECT_ROOT__ is replaced at install time.
+
+[Unit]
+Description=ActivityGraph network activity analyser
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=__PROJECT_ROOT__
+ExecStart=__PROJECT_ROOT__/.venv/bin/python -m activitygraph.main --serve --serve-source live -i eth1 --host 0.0.0.0 --no-browser --capture-mode light --active-within 15 --enforce-blacklist --dhcp-leases --accounts __PROJECT_ROOT__/accounts.db --history-db __PROJECT_ROOT__/history.db
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

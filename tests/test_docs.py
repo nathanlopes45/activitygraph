@@ -85,3 +85,34 @@ def test_systemd_units_point_at_an_explicit_account_database(path):
 @pytest.mark.parametrize("path", [MARKDOWN, BUILDER], ids=["markdown", "pdf-builder"])
 def test_no_em_dashes(path):
     assert "\u2014" not in path.read_text(encoding="utf-8")
+
+
+# ---------------- the deployed unit ----------------
+
+UNIT = DOCS.parent / "deploy" / "activitygraph.service"
+
+
+def test_the_unit_runs_what_the_runbook_recommends():
+    """A unit written once by hand drifts as the flags change, and the drift
+    only surfaces at the next reboot, when whatever was being tested by hand
+    silently reverts. This is the reason it lives in the repository."""
+    exec_line = [line for line in UNIT.read_text(encoding="utf-8").splitlines()
+                 if line.startswith("ExecStart")][0]
+    for flag in ["--capture-mode light", "--active-within 15", "--enforce-blacklist",
+                 "--dhcp-leases", "--accounts", "--history-db"]:
+        assert flag in exec_line, f"the deployed unit would run without {flag}"
+
+
+def test_the_unit_carries_no_machine_specific_path():
+    """Paths are filled in at install time. A home directory baked into a
+    committed file is wrong for everyone except whoever wrote it."""
+    text = UNIT.read_text(encoding="utf-8")
+    assert "__PROJECT_ROOT__" in text
+    assert "/home/" not in text
+
+
+def test_the_installer_is_executable_and_refuses_without_root():
+    text = (DOCS.parent / "deploy" / "install-service.sh").read_text(encoding="utf-8")
+    assert "set -euo pipefail" in text
+    assert "EUID -ne 0" in text, "writing to /etc without root should fail clearly"
+    assert "backup" in text, "an existing unit should be recoverable"

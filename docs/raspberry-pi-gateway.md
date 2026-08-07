@@ -747,6 +747,22 @@ discards all accounts and claims but leaves captured history untouched.
 
 ### 9. Run it permanently
 
+The quickest way, which is also how to **update** the unit after changing
+any flag:
+
+```bash
+cd ~/activitygraph && sudo deploy/install-service.sh
+```
+
+It fills in the paths, backs up any existing unit, reloads systemd, restarts
+the service and reports whether it came up. Re-run it whenever the flags
+change: a unit written once by hand drifts, and the drift only shows up at
+the next reboot.
+
+The rest of this step explains what that script does, and is worth reading
+once even if you use it.
+
+
 Set a variable to your project root first, so the paths below are filled in
 for you rather than edited by hand:
 
