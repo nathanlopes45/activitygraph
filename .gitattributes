@@ -11,3 +11,10 @@
 *.jpg binary
 *.ico binary
 *.db binary
+
+# Shell scripts must keep LF even in a Windows working copy. This project is
+# edited on Windows and copied to a Linux gateway with scp, so a CRLF line
+# ending survives the trip and bash fails on the carriage return with an
+# error that names a line the reader can see nothing wrong with.
+*.sh text eol=lf
+*.service text eol=lf
