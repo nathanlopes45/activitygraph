@@ -1,4 +1,4 @@
-"""An admin changing somebody else's limits.
+﻿"""An admin changing somebody else's limits.
 
 Removing one from the admin panel did nothing visible. The page sent no
 user_id, the server read that as "my own", and it deleted a limit the admin
@@ -43,15 +43,15 @@ def env():
     pipeline = run_demo(idle_timeout=5.0)
     accounts = AccountStore(sqlite3.connect(":memory:", check_same_thread=False))
     admin = accounts.create_user("theadmin", "password123")
-    ryan = accounts.create_user("ryan", "password123")
-    accounts.set_quota(ryan.id, "YouTube", 3600)
+    sam = accounts.create_user("sam", "password123")
+    accounts.set_quota(sam.id, "YouTube", 3600)
     app = create_app(pipeline, live=False, accounts=accounts, secret=SECRET)
     return {
-        "accounts": accounts, "admin": admin, "ryan": ryan,
+        "accounts": accounts, "admin": admin, "sam": sam,
         "routes": {r.endpoint.__name__: r.endpoint
                    for r in app.routes if hasattr(r, "endpoint")},
         "admin_token": issue_token(admin.id, SECRET),
-        "ryan_token": issue_token(ryan.id, SECRET),
+        "sam_token": issue_token(sam.id, SECRET),
     }
 
 
@@ -60,16 +60,16 @@ def test_the_admin_view_carries_the_user_id_each_row_belongs_to(env):
     rows themselves do not carry one."""
     payload = body(env["routes"]["get_quotas"](FakeRequest(token=env["admin_token"])))
     group = payload["groups"][0]
-    assert group["user_id"] == env["ryan"].id
+    assert group["user_id"] == env["sam"].id
     assert [row["service"] for row in group["limits"]] == ["YouTube"]
 
 
 def test_an_admin_removes_the_limit_it_was_shown(env):
     result = env["routes"]["set_quota"](
         FakeRequest(token=env["admin_token"]),
-        {"service": "YouTube", "minutes": 0, "user_id": env["ryan"].id})
+        {"service": "YouTube", "minutes": 0, "user_id": env["sam"].id})
     assert status(result) == 200
-    assert env["accounts"].quotas_for(env["ryan"].id) == {}
+    assert env["accounts"].quotas_for(env["sam"].id) == {}
 
 
 def test_removing_without_naming_the_owner_does_not_touch_another_group(env):
@@ -77,23 +77,23 @@ def test_removing_without_naming_the_owner_does_not_touch_another_group(env):
     wrong account, which is what made the bug invisible."""
     env["routes"]["set_quota"](FakeRequest(token=env["admin_token"]),
                                {"service": "YouTube", "minutes": 0})
-    assert env["accounts"].quotas_for(env["ryan"].id) == {"YouTube": 3600}
+    assert env["accounts"].quotas_for(env["sam"].id) == {"YouTube": 3600}
 
 
 def test_a_user_still_removes_their_own_without_naming_themselves(env):
     """The personal view sends no user_id and must keep working."""
-    result = env["routes"]["set_quota"](FakeRequest(token=env["ryan_token"]),
+    result = env["routes"]["set_quota"](FakeRequest(token=env["sam_token"]),
                                         {"service": "YouTube", "minutes": 0})
     assert status(result) == 200
-    assert env["accounts"].quotas_for(env["ryan"].id) == {}
+    assert env["accounts"].quotas_for(env["sam"].id) == {}
 
 
 def test_a_user_cannot_remove_somebody_elses(env):
-    other = env["accounts"].create_user("sam", "password123")
+    other = env["accounts"].create_user("alex", "password123")
     env["accounts"].set_quota(other.id, "TikTok", 600)
 
     result = env["routes"]["set_quota"](
-        FakeRequest(token=env["ryan_token"]),
+        FakeRequest(token=env["sam_token"]),
         {"service": "TikTok", "minutes": 0, "user_id": other.id})
     assert status(result) == 403
     assert env["accounts"].quotas_for(other.id) == {"TikTok": 600}
@@ -113,7 +113,7 @@ def test_the_store_survives_two_threads(env):
     handlers and the background pass at once. A read interleaved with
     another thread's write can raise, and a failure inside a request handler
     surfaces to the person using it as suddenly not being signed in."""
-    accounts, admin, ryan = env["accounts"], env["admin"], env["ryan"]
+    accounts, admin, sam = env["accounts"], env["admin"], env["sam"]
     errors = []
     stop = threading.Event()
 
@@ -132,8 +132,8 @@ def test_the_store_survives_two_threads(env):
     try:
         for index in range(300):
             try:
-                accounts.set_quota(ryan.id, "YouTube", 60 + index)
-                accounts.claim_device(ryan.id, "AA:BB:CC:00:00:01", "phone")
+                accounts.set_quota(sam.id, "YouTube", 60 + index)
+                accounts.claim_device(sam.id, "AA:BB:CC:00:00:01", "phone")
                 assert accounts.get_user(admin.id) is not None, "the admin vanished"
             except Exception as exc:          # noqa: BLE001 - the point
                 errors.append(f"request: {type(exc).__name__}: {exc}")

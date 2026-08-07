@@ -1,7 +1,7 @@
-"""Claiming a device puts it in its owner's group.
+﻿"""Claiming a device puts it in its owner's group.
 
 It did not. The label goes through the alias mechanism, so a claimed phone
-showed "ryan's Nothing-Phone-2" and a claimed laptop showed "ryan's laptop",
+showed "sam's Android-Phone" and a claimed laptop showed "sam's laptop",
 and both sat under Ungrouped. AccountStore.group_map() existed and had a
 test of its own; nothing in the application ever called it. The dashboard's
 whole premise is per-person totals, so the one thing it could not answer was
@@ -19,9 +19,9 @@ from activitygraph.main import run_demo
 from activitygraph.models import Packet
 from activitygraph.server import BackgroundCapture, create_app
 
-PHONE = "B2:53:D1:E0:9D:B6"
-LAPTOP = "68:34:21:5A:E2:FE"
-OTHER = "0A:EE:2A:F3:5C:C7"
+PHONE = "AA:BB:CC:00:00:11"
+LAPTOP = "AA:BB:CC:00:00:12"
+OTHER = "AA:BB:CC:00:00:13"
 
 
 def seen(registry, ip, mac):
@@ -34,9 +34,9 @@ def seen(registry, ip, mac):
 def accounts():
     store = AccountStore(sqlite3.connect(":memory:"))
     store.create_user("theadmin", "password123")
-    ryan = store.create_user("ryan", "password123")
-    store.claim_device(ryan.id, PHONE, "Nothing-Phone-2")
-    store.claim_device(ryan.id, LAPTOP, "laptop")
+    sam = store.create_user("sam", "password123")
+    store.claim_device(sam.id, PHONE, "Android-Phone")
+    store.claim_device(sam.id, LAPTOP, "laptop")
     return store
 
 
@@ -49,7 +49,7 @@ def test_two_devices_one_person_land_in_one_group(accounts):
 
     registry.set_groups(accounts.group_map())
     groups = {d.mac: d.group for d in registry.all_devices()}
-    assert groups[PHONE] == groups[LAPTOP] == "ryan's group"
+    assert groups[PHONE] == groups[LAPTOP] == "sam's group"
 
 
 def test_an_unclaimed_device_stays_ungrouped(accounts):
@@ -65,7 +65,7 @@ def test_a_device_seen_after_the_claim_is_grouped_too(accounts):
     registry = DeviceRegistry()
     registry.set_groups(accounts.group_map())
     seen(registry, "192.168.50.64", PHONE)
-    assert registry.all_devices()[0].group == "ryan's group"
+    assert registry.all_devices()[0].group == "sam's group"
 
 
 def test_a_configured_group_file_still_works(accounts):
@@ -77,7 +77,7 @@ def test_a_configured_group_file_still_works(accounts):
     registry.set_groups(accounts.group_map())
     by_mac = {d.mac: d.group for d in registry.all_devices()}
     assert by_mac[OTHER] == "Household"
-    assert by_mac[PHONE] == "ryan's group"
+    assert by_mac[PHONE] == "sam's group"
 
 
 def test_a_claim_wins_over_the_file(accounts):
@@ -85,7 +85,7 @@ def test_a_claim_wins_over_the_file(accounts):
     registry = DeviceRegistry(groups=GroupRegistry({PHONE: "Spare"}))
     seen(registry, "192.168.50.64", PHONE)
     registry.set_groups(accounts.group_map())
-    assert registry.all_devices()[0].group == "ryan's group"
+    assert registry.all_devices()[0].group == "sam's group"
 
 
 def test_releasing_a_device_returns_it_to_ungrouped(accounts):
@@ -93,8 +93,8 @@ def test_releasing_a_device_returns_it_to_ungrouped(accounts):
     seen(registry, "192.168.50.64", PHONE)
     registry.set_groups(accounts.group_map())
 
-    ryan = accounts.get_user(2)
-    accounts.release_device(ryan.id, PHONE)
+    sam = accounts.get_user(2)
+    accounts.release_device(sam.id, PHONE)
     registry.set_groups(accounts.group_map())
     assert registry.all_devices()[0].group == UNGROUPED
 
@@ -109,8 +109,8 @@ def test_building_the_app_applies_groups(accounts):
     create_app(pipeline, live=False, accounts=accounts, secret=b"x" * 32)
 
     claimed = [d for d in pipeline.devices.all_devices() if d.mac == PHONE][0]
-    assert claimed.group == "ryan's group"
-    assert claimed.display_name() == "ryan's Nothing-Phone-2", "the name still applies"
+    assert claimed.group == "sam's group"
+    assert claimed.display_name() == "sam's Android-Phone", "the name still applies"
 
 
 def test_a_background_pass_reapplies_groups(accounts):
@@ -122,4 +122,4 @@ def test_a_background_pass_reapplies_groups(accounts):
 
     capture._flush_once()
     grouped = [d for d in pipeline.devices.all_devices() if d.mac == LAPTOP][0]
-    assert grouped.group == "ryan's group"
+    assert grouped.group == "sam's group"
