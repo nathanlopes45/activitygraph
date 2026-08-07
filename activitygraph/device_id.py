@@ -198,6 +198,9 @@ class DeviceRegistry:
         self._by_address: dict[str, Device] = {}  # every address -> its device
         self._aliases = {_normalize_mac(mac): name for mac, name in (aliases or {}).items()}
         self._groups = groups or GroupRegistry()
+        # What --device-groups configured, kept so claims can be layered on
+        # top without discarding it.
+        self._configured_groups = self._groups.mapping()
         self._active_resolve = active_resolve
         self._resolver = resolver
         self._run_async = run_async or _spawn_daemon_thread
@@ -230,6 +233,28 @@ class DeviceRegistry:
             if name:
                 device.hostname = name
                 self._best_name[key] = (name, _ALIAS_QUALITY)
+
+    def set_groups(self, mac_to_group: dict) -> None:
+        """Assign claimed devices to their owner's group, at once.
+
+        The counterpart to set_aliases, and it was missing. Claiming a device
+        named it, because the label goes through the alias mechanism, but
+        nothing ever told the registry whose group it was in. So a phone and
+        a laptop claimed by the same person both read "ryan's laptop" and
+        "ryan's Nothing-Phone-2" while sitting under Ungrouped, which is the
+        one place the dashboard cannot answer "where did I spend my time".
+
+        Layered over whatever --device-groups configured rather than
+        replacing it, so a file that groups devices nobody has claimed keeps
+        working. A claim wins on conflict: it is the more recent statement,
+        and the person making it was holding the device.
+        """
+        merged = dict(self._configured_groups)
+        merged.update({_normalize_mac(mac): group
+                       for mac, group in (mac_to_group or {}).items() if group})
+        self._groups = GroupRegistry(merged)
+        for device in self._devices.values():
+            device.group = self._groups.group_for_mac(device.mac)
 
     def observe(self, packet: Packet) -> None:
         now = packet.timestamp

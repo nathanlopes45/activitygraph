@@ -200,9 +200,16 @@ def create_app(pipeline, live: bool = False, history_store=None, capture=None,
         }
 
     def _apply_device_labels():
-        """Push claimed-device names into the registry as aliases."""
+        """Push what claiming established into the device registry.
+
+        Both halves matter. The name is what a person called their device,
+        and the group is whose it is. Only the name was being applied, so
+        claimed devices showed their owner's name and still sat under
+        Ungrouped.
+        """
         if accounts is not None:
             pipeline.devices.set_aliases(accounts.device_labels())
+            pipeline.devices.set_groups(accounts.group_map())
 
     _apply_device_labels()
 
@@ -811,6 +818,13 @@ class BackgroundCapture:
             from .dhcp_leases import ingest_leases
 
             ingest_leases(self.pipeline, self.dhcp_leases or None, announce=False)
+        # Names and groups are applied when somebody claims a device, but
+        # re-applied here so a device that first appears after the claim,
+        # or after a restart, still lands in the right group without anyone
+        # having to claim it twice.
+        if self.accounts is not None:
+            self.pipeline.devices.set_aliases(self.accounts.device_labels())
+            self.pipeline.devices.set_groups(self.accounts.group_map())
         # Before flush_idle, so a flow the kernel says is still moving
         # is not timed out on the same tick that proves it is alive.
         self._poll_flow_accounting()

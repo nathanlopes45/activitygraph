@@ -89,6 +89,11 @@ class GroupRegistry:
             _normalize_mac(mac): group for mac, group in (mac_to_group or {}).items()
         }
 
+    def mapping(self) -> dict[str, str]:
+        """A copy of MAC -> group, so callers can extend it without
+        reaching into the registry or losing what a config file set."""
+        return dict(self._mac_to_group)
+
     def group_for_mac(self, mac: Optional[str]) -> str:
         if not mac:
             return UNGROUPED

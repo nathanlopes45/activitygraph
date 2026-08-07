@@ -26,6 +26,16 @@ Notable changes, newest first. Dates are when the work landed on `main`.
 
 ### Fixed
 
+- **Claiming a device never put it in its owner's group.** The name people
+  chose was applied, because it goes through the alias mechanism, so two
+  devices claimed by the same person read "ryan's laptop" and "ryan's
+  Nothing-Phone-2" while both sat under Ungrouped.
+  `AccountStore.group_map()` existed and had a test; nothing called it. Per
+  person totals are the point of the dashboard, so this was the one
+  question it could not answer. Claims are layered over any
+  `--device-groups` file rather than replacing it, and re-applied on every
+  background pass so a device that appears later is grouped without being
+  claimed twice.
 - **The background thread died on a live gateway**, taking history
   recording, flow closing and blacklist enforcement with it while the
   dashboard carried on looking healthy. The firewall refresh iterated the
