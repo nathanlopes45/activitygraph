@@ -21,6 +21,12 @@ if [[ ! -x "$ROOT/.venv/bin/python" ]]; then
     exit 1
 fi
 
+# Bytecode copied from the laptop alongside the sources. Harmless when the
+# Python versions differ, since the tag in the filename stops it being used,
+# but confusing when they match and a stale file wins. Cheaper to clear than
+# to reason about after an scp.
+find "$ROOT" -name __pycache__ -type d -prune -exec rm -rf {} + 2>/dev/null || true
+
 if [[ -f $UNIT ]]; then
     cp "$UNIT" "$UNIT.backup"
     echo "Previous unit saved to $UNIT.backup"

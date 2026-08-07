@@ -267,11 +267,42 @@ callout("Run the copy once",
         "Running it a second time copies into the project root instead, "
         "leaving the real project at "
         "<font face='Courier'>~/activitygraph/activitygraph</font> and "
-        "quietly breaking every path below. To re-copy, delete "
-        "<font face='Courier'>~/activitygraph</font> on the Pi first. The "
-        "transfer sends about 115 MB and takes a few minutes, almost all of "
-        "it the .venv folder you are about to throw away; scp has no exclude "
-        "option.")
+        "quietly breaking every path below. The transfer sends about 115 MB "
+        "and takes a few minutes, almost all of it the .venv folder you are "
+        "about to throw away; scp has no exclude option. To ship a change "
+        "later see Updating the Pi, below: do not repeat this command, and "
+        "do not delete the project directory to make room for it.")
+
+h3("Updating the Pi later")
+
+p("There is no <font face='Courier'>git pull</font> on the Pi. The code got "
+  "there by scp, so there is no clone to pull into, and Raspberry Pi OS Lite "
+  "ships without git at all. Copy only what changed, then reinstall the "
+  "service:")
+
+code(r"""
+scp -r "C:\Nathan Daily\Study\Projects\ActivityGraph\activitygraph\activitygraph" "C:\Nathan Daily\Study\Projects\ActivityGraph\activitygraph\deploy" nathan@activitygraph.local:~/activitygraph/
+""", CODE_NARROW)
+
+code("""
+sudo ~/activitygraph/deploy/install-service.sh
+""")
+
+callout("Never delete the project directory to re-copy",
+        "It holds accounts.db, history.db and accounts.key: every account, "
+        "every recorded day of activity, and the key that keeps people "
+        "signed in. None of them exists anywhere else. Naming the two "
+        "subfolders above is what makes an update safe to repeat, because it "
+        "replaces the Python package and the deployment scripts and touches "
+        "neither the databases nor .venv. That last one matters more than it "
+        "looks: the laptop's .venv/pyvenv.cfg says home = C:\\Python313, so "
+        "copying the whole project over an installed Pi overwrites the "
+        "virtualenv's idea of where Python lives and breaks it in a way that "
+        "reads as a missing package.")
+
+p("The package is installed with <font face='Courier'>pip install -e .</font>, "
+  "so new code is live as soon as the service restarts. Reinstalling "
+  "dependencies is only needed if pyproject.toml changed.")
 
 p("Then on the <b>Pi</b>, install the system packages:")
 code("""

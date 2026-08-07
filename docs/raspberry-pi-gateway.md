@@ -169,6 +169,41 @@ The transfer sends about 115 MB and takes a few minutes, almost all of it
 the `.venv` folder you are about to throw away. That is unavoidable with
 `scp`, which has no exclude option.
 
+### Updating the Pi later
+
+The command above is for the first copy only. **Do not repeat it, and do
+not delete `~/activitygraph` to make room**: that directory holds
+`accounts.db`, `history.db` and `accounts.key`, which are every account,
+every recorded day of activity, and the key that keeps people signed in.
+None of them exist anywhere else.
+
+There is no `git pull` on the Pi either. The code got there by `scp`, so
+there is no clone to pull into, and Raspberry Pi OS Lite ships without
+`git` at all.
+
+To ship a change, copy only what changed:
+
+```powershell
+scp -r "C:\Nathan Daily\Study\Projects\ActivityGraph\activitygraph\activitygraph" "C:\Nathan Daily\Study\Projects\ActivityGraph\activitygraph\deploy" nathan@activitygraph.local:~/activitygraph/
+```
+
+Then on the Pi:
+
+```bash
+sudo ~/activitygraph/deploy/install-service.sh
+```
+
+Naming the two subfolders is what makes this safe to repeat. It replaces
+the Python package and the deployment scripts, and touches neither the
+databases nor `.venv`. That last one matters more than it looks: the
+laptop's `.venv/pyvenv.cfg` says `home = C:\Python313`, so copying the
+whole project over an installed Pi would overwrite the virtualenv's idea of
+where Python lives and break it in a way that reads as a missing package.
+
+The package is installed with `pip install -e .`, so the new code is live
+as soon as the service restarts. Reinstalling is only needed if
+`pyproject.toml` changed.
+
 **On the Pi**, install the system packages:
 
 ```bash
