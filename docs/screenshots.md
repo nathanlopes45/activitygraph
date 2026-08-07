@@ -1,36 +1,43 @@
 # Screenshots
 
-Four views of a live dashboard, taken on a real network. The first is the
-one on the [README](../README.md); the rest are here so the front page stays
-short enough to read.
+Four views of a live dashboard on a real home network. The first two are
+also on the [README](../README.md); the rest are here so the front page
+stays short enough to read.
 
 Captions say what each view answers rather than what it contains, on the
 grounds that a reader can already see what it contains.
 
-## The signed-in view
+## Signed in as the admin
 
-![Filter and This Device panels above the group's daily limits and blocked
-sites, the group's devices, and where the time went per
-person](images/dashboard.png)
+![A collapsed filter, the This Device panel, and every group's daily limits
+and blocked sites](images/dashboard.png)
 
-What a person sees when they sign in: the device they are holding, the group
-it belongs to, what that group has blocked or limited, and where its time
-went. The filter sits collapsed at the top because it is a convenience, not
-the point of the page.
+The admin sees every group's lists and can edit them, which is what makes
+the account useful without letting it claim anything: a device belongs to
+one group at a time, so an admin claiming one would take it from the person
+whose device it is.
 
-This is the one image in the README, because it carries the whole idea in a
-single frame: time, attributed to people, with the controls to act on it.
+Two groups show Instagram already blocked for the day, having spent an
+allowance measured in minutes. The filter sits collapsed because it is a
+convenience, not the point of the page.
 
-## Time, per person, and the activity graph
+## Where the time went, and the graph underneath
 
-![Where your time went and time per person, above the activity
-graph](images/time-and-activity-graph.png)
+![Category, subcategory and service totals beside time per person, above the
+activity graph joining devices to sessions to services](images/time-and-activity-graph.png)
 
-The totals with the graph underneath, which is where sessions become legible
-as an evening rather than as four hundred connections.
+The breakdown goes category, then subcategory, then service: Social Media,
+then Feeds, then Instagram. Nobody thinks in port numbers.
 
-Time is measured by interval union, never by sum. A phone and a laptop both
-on YouTube for the same hour is one hour of that group's day, not two.
+The pair of numbers under **time by person** is the whole argument for
+measuring time the way this does. Five devices produced **17m of device
+time** across **10m** of wall clock, because people use more than one thing
+at once. Intervals are unioned rather than summed, so a phone and a laptop
+both on Instagram for the same minute cost that minute once.
+
+Below, the activity graph joins each device to its sessions and on to the
+services they reached, which is what turns four hundred connections into an
+evening somebody would recognise.
 
 ## The detail, for anyone who wants it
 
