@@ -16,8 +16,9 @@ It runs entirely on hardware you control, most usefully on a Raspberry Pi
 acting as your network's gateway, where every device's traffic passes through
 it. Nothing leaves the machine.
 
-<!-- Replace with a screenshot of the dashboard. -->
-![The ActivityGraph dashboard](docs/images/dashboard.png)
+![The ActivityGraph dashboard: the signed-in view, showing this device and
+the group it belongs to, the group's daily limits and blocked sites, and
+where the time went, broken down per person](docs/images/dashboard.png)
 
 <!-- Drawn by docs/images/make_gateway_diagram.py; edit that, not the PNG. -->
 ![How ActivityGraph sits between the household and the internet: devices
@@ -25,9 +26,9 @@ connect to an access point with DHCP switched off, which feeds the Pi on
 eth1, which forwards out of eth0 through the modem to the
 internet](docs/images/gateway.png)
 
-More views, including per-person totals, daily limits and trends over time:
-[docs/screenshots.md](docs/screenshots.md). Two images live here on purpose;
-the rest are one click away.
+More views, including the activity graph, the category breakdown and trends
+over time: [docs/screenshots.md](docs/screenshots.md). Two images live here
+on purpose; the rest are one click away.
 
 ## What it does
 

@@ -1,59 +1,55 @@
 # Screenshots
 
-The README carries two images: the dashboard and the gateway diagram. The
-rest live here, so the front page stays short enough to read.
+Four views of a live dashboard, taken on a real network. The first is the
+one on the [README](../README.md); the rest are here so the front page stays
+short enough to read.
 
-Add one by dropping a PNG in `docs/images/` and adding a section below.
-Keep the captions describing what the view answers rather than what it
-contains, since a reader can already see what it contains.
+Captions say what each view answers rather than what it contains, on the
+grounds that a reader can already see what it contains.
 
-Take them on a real network. A screenshot with invented device names is the
-one thing in this repository that would be untrue, and it is also the first
-thing anyone checks.
+## The signed-in view
 
-## Where the time went
+![Filter and This Device panels above the group's daily limits and blocked
+sites, the group's devices, and where the time went per
+person](images/dashboard.png)
 
-<!-- ![Time by category](images/time-by-category.png) -->
+What a person sees when they sign in: the device they are holding, the group
+it belongs to, what that group has blocked or limited, and where its time
+went. The filter sits collapsed at the top because it is a convenience, not
+the point of the page.
 
-The three-level breakdown: category, then subcategory, then service. Bytes
-are deliberately not the headline, because a 4K stream and an evening of
-reading produce wildly different byte counts for the same hour of someone's
-life.
+This is the one image in the README, because it carries the whole idea in a
+single frame: time, attributed to people, with the controls to act on it.
 
-## Per person, across their devices
+## Time, per person, and the activity graph
 
-<!-- ![Group totals](images/groups.png) -->
+![Where your time went and time per person, above the activity
+graph](images/time-and-activity-graph.png)
 
-The question the project exists to answer. A phone and a laptop both on
-YouTube for the same hour is one hour, not two: intervals are unioned rather
-than summed.
+The totals with the graph underneath, which is where sessions become legible
+as an evening rather than as four hundred connections.
 
-## Daily limits and blocked sites
+Time is measured by interval union, never by sum. A phone and a laptop both
+on YouTube for the same hour is one hour of that group's day, not two.
 
-<!-- ![Limits panel](images/limits.png) -->
+## The detail, for anyone who wants it
 
-What a group has chosen to block outright, and what it has given itself an
-allowance for. The admin view shows every group's lists.
+![Category breakdown and devices, with the Stats for Nerds section
+expanded](images/stats-for-nerds.png)
 
-## Devices
+The category breakdown and the device list, with **Stats for Nerds**
+expanded to show sessions and raw flows.
 
-<!-- ![Device list](images/devices.png) -->
+It is collapsed by default, and that is the design rather than an oversight:
+the people this runs for are not network engineers, and a dashboard that
+opens on a flow table answers a question nobody asked. The detail is one
+click away for anyone who wants it.
 
-Named from what each device announces about itself, or from what its owner
-called it when they claimed it. Worth showing the two together, since the
-difference between "iPhone" and "Nathan's iPhone 13" is most of the work.
+## Day over day
 
-## Trends over time
+![Category breakdown and devices with Stats for Nerds collapsed, above the
+history panel](images/history-and-breakdown.png)
 
-<!-- ![History](images/history.png) -->
-
-Day over day, from `--history-db`. Useful for showing the project does
-something a single snapshot cannot.
-
-## Stats for nerds
-
-<!-- ![Sessions and flows](images/sessions.png) -->
-
-Sessions and raw flows, collapsed by default. Worth including precisely
-because it is collapsed: it shows the detail exists without putting it in
-front of someone who does not want it.
+The same page with the detail folded away, and the history panel showing
+trends across runs. This is what `--history-db` buys: a single snapshot
+cannot tell you whether today was unusual.
