@@ -883,10 +883,7 @@ Wants=network-online.target
 Type=simple
 User=root
 WorkingDirectory=/opt/activitygraph
-ExecStart=/opt/activitygraph/.venv/bin/python -m activitygraph.main \
-  --serve --serve-source live -i eth1 --host 0.0.0.0 --no-browser \
-  --capture-mode light --active-within 15 --enforce-blacklist \n  --accounts /opt/activitygraph/accounts.db \
-  --dhcp-leases --history-db /opt/activitygraph/history.db
+ExecStart=/opt/activitygraph/.venv/bin/python -m activitygraph.main --serve --serve-source live -i eth1 --host 0.0.0.0 --no-browser --capture-mode light --flow-accounting --active-within 15 --enforce-blacklist --dhcp-leases --accounts /opt/activitygraph/accounts.db --history-db /opt/activitygraph/history.db
 Restart=always
 RestartSec=10
 

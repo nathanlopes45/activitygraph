@@ -137,6 +137,34 @@ def test_ci_uses_actions_that_are_not_retired():
         assert action not in workflow, f"{action} {why}"
 
 
+def test_the_installer_is_committed_executable():
+    """Without the mode bit in git, the file arrives on the Pi at 644 and
+    `sudo path/to/install-service.sh` answers "command not found", which
+    reads as a missing file rather than a missing permission. Windows has no
+    execute bit to carry, so git's index is the only place it can live."""
+    import subprocess
+
+    listing = subprocess.run(
+        ["git", "ls-files", "-s", "deploy/install-service.sh"],
+        cwd=DOCS.parent, capture_output=True, text=True, check=True).stdout
+    assert listing.startswith("100755"), f"committed non-executable: {listing.strip()}"
+
+
+@pytest.mark.parametrize("path", [MARKDOWN, BUILDER], ids=["markdown", "pdf-builder"])
+def test_no_documented_execstart_is_split_across_lines(path):
+    """systemd joins a backslash continuation, but a heredoc eats the
+    backslash first, so the next line lands inside the command: a unit
+    written this way starts the tool with `Restart=always` as an argument
+    and exits 2. The guide says as much and then did it anyway in its own
+    second example."""
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if "ExecStart=" not in line:
+            continue
+        assert not line.rstrip().endswith(CONTINUATION), \
+            f"ExecStart continued onto the next line: {line[:70]}"
+        assert "\\n" not in line, f"literal escape inside ExecStart: {line[:70]}"
+
+
 def test_the_installer_is_executable_and_refuses_without_root():
     text = (DOCS.parent / "deploy" / "install-service.sh").read_text(encoding="utf-8")
     assert "set -euo pipefail" in text
