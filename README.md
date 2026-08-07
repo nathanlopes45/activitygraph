@@ -19,8 +19,11 @@ it. Nothing leaves the machine.
 <!-- Replace with a screenshot of the dashboard. -->
 ![The ActivityGraph dashboard](docs/images/dashboard.png)
 
-<!-- Replace with a photo or diagram of the gateway setup. -->
-![The Raspberry Pi gateway](docs/images/gateway.png)
+<!-- Drawn by docs/images/make_gateway_diagram.py; edit that, not the PNG. -->
+![How ActivityGraph sits between the household and the internet: devices
+connect to an access point with DHCP switched off, which feeds the Pi on
+eth1, which forwards out of eth0 through the modem to the
+internet](docs/images/gateway.png)
 
 ## What it does
 

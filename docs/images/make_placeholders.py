@@ -4,6 +4,9 @@ The README references two images. Committing nothing left GitHub rendering
 two broken links, which is the first thing anyone sees, so a real image is
 committed for each and is meant to be replaced rather than kept.
 
+Only the dashboard screenshot is still a placeholder. It has to be a real
+screenshot of a real network, which is not something a script can produce.
+
 Run with `pip install -e ".[docs]"` available:
 
     python docs/images/make_placeholders.py
@@ -24,8 +27,12 @@ ACCENT = (127, 231, 196)
 
 PLACEHOLDERS = [
     ("dashboard.png", "Dashboard screenshot", "docs/images/dashboard.png"),
-    ("gateway.png", "Gateway photo or diagram", "docs/images/gateway.png"),
 ]
+
+# gateway.png is no longer here: it is a real diagram now, drawn by
+# make_gateway_diagram.py. Leaving it in this list would mean re-running the
+# placeholder script silently replaced a finished image with a grey box,
+# and the loss would only show up in the README.
 
 
 def draw(name: str, title: str, path_hint: str, size=(1200, 630)) -> None:
