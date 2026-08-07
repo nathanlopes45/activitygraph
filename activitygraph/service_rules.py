@@ -331,6 +331,41 @@ def blockable_domains(service: str) -> tuple:
     """The front doors of a service, or () if it should never be blocked."""
     return PRIMARY_DOMAINS.get(service, ())
 
+
+# Hosts that serve a service's content *inside somebody else's page*.
+#
+# This exists because "front doors only" was the wrong way to keep a daily
+# limit from breaking embeds. It kept embeds working, but it also left the
+# apps working: a limit on Instagram blocked instagram.com while the feed
+# carried on loading from scontent-*.cdninstagram.com, so the limit did
+# nothing a person could see.
+#
+# A limit now covers the whole service and subtracts these, which is the
+# same question asked the right way round: not "which host is the front
+# door" but "which host would a stranger's page be relying on".
+EMBED_DOMAINS: tuple = (
+    "googlevideo.com",       # the video stream itself, embedded or not
+    "youtube-nocookie.com",  # the embed-only YouTube domain
+    "ytimg.com",             # thumbnails, including in an embedded player
+    "maps.googleapis.com",   # a map on a shop's contact page
+    "maps.gstatic.com",
+    "gstatic.com",           # shared static assets, never a destination
+)
+
+
+def is_embed_host(hostname: Optional[str]) -> bool:
+    """True if this host serves content embedded in other people's pages.
+
+    Matched by suffix, so the CDN hosts under an embed domain are covered
+    too: a YouTube stream arrives from a name like
+    rr3---sn-4g5e6nez.googlevideo.com, never from googlevideo.com itself.
+    """
+    name = (hostname or "").strip().lower().rstrip(".")
+    if not name:
+        return False
+    return any(name == domain or name.endswith("." + domain)
+               for domain in EMBED_DOMAINS)
+
 # Fallback classification purely by well-known port, used when there's no
 # domain/SNI available at all (e.g. raw non-HTTP(S) traffic).
 PORT_RULES: dict[int, tuple[str, str]] = {

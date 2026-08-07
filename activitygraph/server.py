@@ -476,6 +476,29 @@ def create_app(pipeline, live: bool = False, history_store=None, capture=None,
             "today_vs_average_time": history_store.today_vs_average_time(),
         })
 
+    @app.get("/api/enforcement")
+    def enforcement(request: Request):
+        """Whether anything is actually being dropped, and if not, why.
+
+        Admin only: it names every group's lists. Answering "I blocked it and
+        it still works" otherwise means reading the journal on the gateway.
+        """
+        user = current_user(request)
+        if accounts is not None:
+            if user is None:
+                return JSONResponse({"error": "Not signed in."}, status_code=401)
+            if not user.is_admin:
+                return JSONResponse({"error": "Admin only."}, status_code=403)
+
+        if capture is None:
+            return {"enabled": False, "applied": False, "groups": [],
+                    "message": "not running a live capture, so nothing is enforced"}
+        status = capture.enforcement_status()
+        status["nft_available"] = _nft_available()
+        if status.get("enabled") and not status["nft_available"]:
+            status["message"] = "nft is not installed, so no rule can be loaded"
+        return status
+
     @app.get("/api/health")
     def health():
         payload = {"status": "ok", "mode": "live" if live else "demo"}
@@ -486,6 +509,14 @@ def create_app(pipeline, live: bool = False, history_store=None, capture=None,
         return payload
 
     return app
+
+
+def _nft_available() -> bool:
+    """Whether the firewall tool exists at all. A laptop run has no nft, and
+    the failure is otherwise indistinguishable from rules that do not match."""
+    import shutil
+
+    return shutil.which("nft") is not None
 
 
 def _is_loopback(host: str) -> bool:
@@ -652,6 +683,8 @@ class BackgroundCapture:
         self.accounts = accounts
         self.enforce_blacklist = enforce_blacklist
         self._last_ruleset = None
+        self._enforcement: dict = {"enabled": enforce_blacklist, "applied": None,
+                                   "message": "no refresh has run yet", "groups": []}
         self._capture_error: Optional[str] = None
 
     def start(self) -> None:
@@ -754,10 +787,14 @@ class BackgroundCapture:
         addresses seen at startup would leak more of the domain every hour.
         """
         if self.accounts is None or not self.enforce_blacklist:
+            self._enforcement = {
+                "enabled": False, "applied": False, "groups": [],
+                "message": "started without --enforce-blacklist"
+                           if self.accounts is not None else "accounts are not enabled",
+            }
             return
-        from .enforcement import apply_ruleset, render_ruleset
-
-        from .enforcement import exhausted_services, quota_patterns
+        from .enforcement import (addresses_for_patterns, apply_ruleset,
+                                  exhausted_services, quota_patterns, render_ruleset)
 
         addresses = {(d.mac or "").upper(): (d.addresses or [d.ip])
                      for d in self.pipeline.devices.all_devices()}
@@ -775,15 +812,51 @@ class BackgroundCapture:
             # service. Merging them here would apply the wider rule to both.
             group["quota_patterns"] = quota_patterns(spent)
 
-        script = render_ruleset(groups, addresses,
-                                self.pipeline.services._dns_cache)
+        dns_cache = self.pipeline.services._dns_cache
+        script = render_ruleset(groups, addresses, dns_cache)
+
+        # Recorded every tick, whether or not the ruleset changed. Blocking
+        # is invisible from the outside: "nothing is dropped" looks the same
+        # whether no rule was written, the rule names an address the traffic
+        # never goes to, or nft rejected the whole thing. This is what makes
+        # the difference answerable without reading the journal.
+        self._enforcement = {
+            "enabled": True,
+            "dns_cache_size": len(dns_cache),
+            "groups": [{
+                "group": g.get("group"),
+                "patterns": g.get("patterns") or [],
+                "quota_patterns": g.get("quota_patterns") or [],
+                "device_macs": g.get("device_macs") or [],
+                "device_addresses": sorted(
+                    a for mac in (g.get("device_macs") or [])
+                    for a in addresses.get(mac.upper(), [])),
+                "blocked_addresses": len(set(
+                    addresses_for_patterns(g.get("patterns") or [], dns_cache,
+                                           whole_service=True))
+                    | set(addresses_for_patterns(
+                        g.get("quota_patterns") or [], dns_cache,
+                        whole_service=True, exclude_embeds=True))),
+            } for g in groups],
+        }
+
         if script == self._last_ruleset:
+            self._enforcement.update(applied=True, message="unchanged since last refresh")
             return  # nothing changed; reloading would be pointless churn
         applied, message = apply_ruleset(script)
         self._last_ruleset = script if applied else None
+        self._enforcement.update(
+            applied=bool(applied),
+            message=message if script is not None else "nothing to enforce",
+            rules=0 if script is None else sum(1 for ln in script.splitlines()
+                                               if ln.startswith("add rule")))
         if not applied:
             print(f"[activitygraph] Warning: could not apply blacklist rules ({message}). "
                   "Nothing is being blocked.", file=sys.stderr)
+
+    def enforcement_status(self) -> dict:
+        """Why traffic is or is not being dropped."""
+        return dict(self._enforcement)
 
     def _record_closed_sessions(self) -> None:
         from datetime import datetime, timezone

@@ -4,6 +4,28 @@ Notable changes, newest first. Dates are when the work landed on `main`.
 
 ## Unreleased
 
+### Fixed
+
+- **Blocking had no effect on a network with IPv6.** Every rule matched
+  IPv4 only, and clients prefer IPv6 when both are offered, so the traffic
+  took the family with no rules on it. Addresses were being resolved
+  correctly and then discarded one line before use. Both families now get a
+  set and a rule.
+- **A daily limit did not reach the app.** It blocked front doors only, so
+  Instagram kept loading its feed from the CDN while instagram.com sat
+  blocked. A limit now covers the whole service and subtracts hosts that
+  serve content embedded in other people's pages, so a video in an article
+  and a map on a shop's page still work.
+- **The admin panel silently showed an empty list** when an API call failed.
+  FastAPI reports errors as `{detail: ...}`, which the page did not
+  recognise, so an admin fell through to the personal view and saw nothing.
+
+### Added
+
+- `/api/enforcement` (admin only) reports whether anything is being
+  dropped and why not: whether nft is present, what each group's lists
+  resolved to, and how many addresses its devices hold.
+
 ### Changed
 
 - CI pins `actions/checkout@v7` and `actions/setup-python@v7`. The previous

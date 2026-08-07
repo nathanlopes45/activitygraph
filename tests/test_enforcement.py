@@ -121,6 +121,56 @@ def test_two_groups_get_separate_sets():
     assert "@blocked1" in bob_rule
 
 
+# ---------------- both address families ----------------
+
+# Every rule used to be IPv4-only. On a network with working IPv6 that means
+# the block does nothing at all: clients prefer IPv6 when both are offered,
+# so the traffic simply took the family with no rules on it. The addresses
+# were resolved correctly and then dropped one line before they were used.
+
+DUAL_DNS = {"1.2.3.4": "tiktok.com", "2a00:1450:4009::1": "tiktok.com"}
+DUAL_ADDRESSES = {SAMS_PHONE: ["192.168.50.50", "2a00:beef::99"]}
+
+
+def test_ipv6_traffic_is_blocked_too():
+    script = render_ruleset([group("Sam", ["tiktok.com"], [SAMS_PHONE])],
+                            DUAL_ADDRESSES, DUAL_DNS)
+    assert "ip6 saddr" in script and "ip6 daddr" in script
+    assert "2a00:1450:4009::1" in script, "the destination was resolved and discarded"
+    assert "2a00:beef::99" in script, "the phone's own IPv6 address"
+
+
+def test_each_family_gets_its_own_set():
+    """`ip saddr` never matches an IPv6 packet and `ip6 saddr` never matches
+    an IPv4 one, so one rule can only ever cover half the traffic."""
+    script = render_ruleset([group("Sam", ["tiktok.com"], [SAMS_PHONE])],
+                            DUAL_ADDRESSES, DUAL_DNS)
+    assert "type ipv4_addr" in script and "type ipv6_addr" in script
+    for line in script.splitlines():
+        if "add element" in line and "v4" in line.split()[3]:
+            assert ":" not in line.split("{")[1], "an IPv6 address in the IPv4 set"
+
+
+@pytest.mark.parametrize("addresses,why", [
+    ({SAMS_PHONE: ["192.168.50.50"]}, "a device with no IPv6 address"),
+    ({SAMS_PHONE: ["2a00:beef::99"]}, "a device with no IPv4 address"),
+])
+def test_one_family_alone_still_produces_a_rule(addresses, why):
+    """A rule is only emitted where both ends of a family are known, but a
+    device holding one family must not lose the other's protection."""
+    script = render_ruleset([group("Sam", ["tiktok.com"], [SAMS_PHONE])],
+                            addresses, DUAL_DNS)
+    assert script is not None, why
+    assert "drop" in script
+
+
+def test_a_family_with_nothing_to_match_is_not_written():
+    """An empty set would cost a lookup on every forwarded packet."""
+    script = render_ruleset([group("Sam", ["tiktok.com"], [SAMS_PHONE])],
+                            {SAMS_PHONE: ["192.168.50.50"]}, {"1.2.3.4": "tiktok.com"})
+    assert "ipv6_addr" not in script
+
+
 # ---------------- failing open ----------------
 
 def test_a_rejected_ruleset_leaves_nothing_behind():
@@ -192,25 +242,76 @@ def test_a_service_with_no_recorded_time_is_not_spent():
 # youtube.com/watch and youtube.com/embed cannot be told apart. What can be
 # told apart is which hosts each uses.
 
-def test_only_the_front_door_is_blocked():
-    assert quota_patterns(["YouTube"]) == ["m.youtube.com", "youtube.com"]
+def test_a_spent_limit_names_the_service_not_a_domain():
+    """Front doors alone were not enough. Naming the service lets resolution
+    cover everything except the hosts that serve embeds, which is what makes
+    a limit bite on an app."""
+    assert quota_patterns(["YouTube"]) == ["service:YouTube"]
+
+
+def quota_addresses(services, dns):
+    """The addresses a spent limit actually blocks."""
+    return addresses_for_patterns(quota_patterns(services), dns,
+                                  whole_service=True, exclude_embeds=True)
 
 
 @pytest.mark.parametrize("host", [
-    "youtube-nocookie.com",   # the embed-only domain
-    "googlevideo.com",        # serves embedded players too
-    "ytimg.com",
+    "youtube-nocookie.com",           # the embed-only domain
+    "rr3---sn-abc.googlevideo.com",   # the stream, embedded or not
+    "i.ytimg.com",                    # thumbnails inside an embedded player
 ])
-def test_the_hosts_that_serve_embedded_players_are_never_blocked(host):
-    assert host not in quota_patterns(["YouTube"])
+def test_a_limit_leaves_the_embedded_player_working(host):
+    """A limit on watching YouTube must not break a video embedded in an
+    article. Over TLS the path is invisible, so youtube.com/watch and
+    youtube.com/embed cannot be told apart. Which hosts each uses can."""
+    assert quota_addresses(["YouTube"], {"5.5.5.5": host}) == []
 
 
 @pytest.mark.parametrize("host", ["maps.googleapis.com", "maps.gstatic.com"])
-def test_the_hosts_that_serve_embedded_maps_are_never_blocked(host):
+def test_a_limit_leaves_an_embedded_map_working(host):
     """A shop's contact page loads a map from the API host. Blocking it
     would break a page nobody meant to restrict."""
-    assert host not in quota_patterns(["Google Maps"])
-    assert quota_patterns(["Google Maps"]) == ["maps.google.com"]
+    assert quota_addresses(["Google Maps"], {"5.5.5.5": host}) == []
+
+
+def test_a_limit_reaches_the_app_not_just_the_website():
+    """The reported failure: an Instagram limit blocked instagram.com while
+    the feed carried on loading from the CDN, so nothing visible changed."""
+    dns = {"1.1.1.1": "instagram.com",
+           "2.2.2.2": "i.instagram.com",
+           "3.3.3.3": "scontent-lhr8-1.cdninstagram.com"}
+    assert quota_addresses(["Instagram"], dns) == ["1.1.1.1", "2.2.2.2", "3.3.3.3"]
+
+
+def spent_limit_script(services, dns):
+    """A rendered ruleset for a group whose limit on `services` has run out."""
+    return render_ruleset(
+        [{"username": "Sam", "patterns": [],
+          "quota_patterns": quota_patterns(services),
+          "device_macs": [SAMS_PHONE]}],
+        ADDRESSES, dns)
+
+
+def test_a_spent_limit_reaches_the_app_in_the_rendered_ruleset():
+    """Asserted through render_ruleset rather than the resolver alone.
+
+    The defect was in how the two were wired together, so a test that called
+    the resolver with the right arguments passed while the firewall was
+    still being handed only the front door.
+    """
+    script = spent_limit_script(["Instagram"], {
+        "1.1.1.1": "instagram.com",
+        "3.3.3.3": "scontent-lhr8-1.cdninstagram.com"})
+    assert "3.3.3.3" in script, "the CDN the feed actually loads from"
+
+
+def test_a_spent_limit_still_spares_embeds_in_the_rendered_ruleset():
+    """The other half of the same wiring, so neither can regress alone."""
+    script = spent_limit_script(["YouTube"], {
+        "1.1.1.1": "youtube.com",
+        "2.2.2.2": "rr3---sn-abc.googlevideo.com"})
+    assert "1.1.1.1" in script
+    assert "2.2.2.2" not in script, "an embedded player would stop working"
 
 
 def test_a_service_with_no_known_front_door_is_never_blocked():
@@ -252,10 +353,23 @@ def test_blocking_a_site_covers_the_hosts_its_app_uses():
 
 
 def test_a_daily_limit_still_spares_the_embed_hosts():
-    """The opposite requirement, and why the two cannot share one rule: a
+    """The opposite requirement, and why the two are resolved differently: a
     limit must leave a video embedded in an article playing."""
-    narrow = addresses_for_patterns(quota_patterns(["YouTube"]), APP_DNS, whole_service=False)
-    assert narrow == ["1.1.1.1"]
+    narrow = quota_addresses(["YouTube"], APP_DNS)
+    assert "2.2.2.2" not in narrow, "googlevideo serves embedded players"
+    assert "3.3.3.3" not in narrow, "ytimg serves an embedded player's thumbnails"
+    assert "1.1.1.1" in narrow, "the site itself is the point of the limit"
+    # The app's own API. Blocking it is what stops the app rather than only
+    # the website, and it is not what an embedded iframe player calls.
+    assert "4.4.4.4" in narrow
+
+
+def test_a_blacklist_is_wider_than_a_limit():
+    """The distinction the whole design rests on, asserted in one place."""
+    wide = addresses_for_patterns(["service:YouTube"], APP_DNS, whole_service=True)
+    narrow = quota_addresses(["YouTube"], APP_DNS)
+    assert set(narrow) < set(wide)
+    assert "2.2.2.2" in wide, "a blacklist means all of it, including the stream"
 
 
 def test_blocking_one_service_does_not_reach_another():

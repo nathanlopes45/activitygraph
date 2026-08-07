@@ -27,6 +27,7 @@ a forwarding rule can name a source.
 """
 from __future__ import annotations
 
+import ipaddress
 import subprocess
 from typing import Iterable, Optional
 
@@ -40,7 +41,8 @@ MAX_ADDRESSES_PER_GROUP = 4096
 
 
 def addresses_for_patterns(patterns: Iterable[str], dns_cache: dict,
-                           whole_service: bool = False) -> list[str]:
+                           whole_service: bool = False,
+                           exclude_embeds: bool = False) -> list[str]:
     """Every learned address belonging to one of these domains.
 
     Matches a domain and its subdomains, so blocking "tiktok.com" also
@@ -54,9 +56,15 @@ def addresses_for_patterns(patterns: Iterable[str], dns_cache: dict,
     broken. Somebody who blocks YouTube outright means all of it. A limit
     stays narrow, because there the point is to stop the front door while
     leaving a video embedded in an article alone.
+
+    `exclude_embeds` is how a daily limit stays narrow now. It used to mean
+    "front doors only", which kept embeds working and the apps working too:
+    an Instagram limit blocked instagram.com while the feed carried on
+    loading from scontent-*.cdninstagram.com. A limit now covers the service
+    and subtracts the hosts that serve content inside other people's pages.
     """
     from .accounts import SERVICE_PREFIX
-    from .service_rules import classify_domain
+    from .service_rules import classify_domain, is_embed_host
 
     wanted, services = set(), set()
     for raw in patterns or []:
@@ -84,6 +92,8 @@ def addresses_for_patterns(patterns: Iterable[str], dns_cache: dict,
         name = (hostname or "").strip().lower().rstrip(".")
         if not name:
             continue
+        if exclude_embeds and is_embed_host(name):
+            continue
         hit = any(name == w or name.endswith("." + w) for w in wanted)
         if not hit and services:
             match = classify_domain(name)
@@ -93,9 +103,36 @@ def addresses_for_patterns(patterns: Iterable[str], dns_cache: dict,
     return sorted(found)
 
 
+def _family(address: str) -> Optional[int]:
+    """4, 6, or None if this is not an address at all."""
+    try:
+        return ipaddress.ip_address((address or "").strip()).version
+    except ValueError:
+        return None
+
+
 def _is_ipv4(address: str) -> bool:
-    parts = address.split(".")
-    return len(parts) == 4 and all(p.isdigit() and 0 <= int(p) <= 255 for p in parts)
+    return _family(address) == 4
+
+
+def _split_families(addresses: Iterable[str]) -> tuple[list, list]:
+    """Sorted IPv4 and IPv6 addresses, each capped.
+
+    Both families matter. Every rule used to be IPv4-only, so on a network
+    with working IPv6 the block did nothing at all: clients prefer IPv6 when
+    both are available, so the traffic simply took the family with no rules
+    on it. The addresses were being resolved correctly and then discarded
+    one line before they were used.
+    """
+    v4, v6 = [], []
+    for address in addresses:
+        version = _family(address)
+        if version == 4 and address not in v4:
+            v4.append(address)
+        elif version == 6 and address not in v6:
+            v6.append(address)
+    return (sorted(v4)[:MAX_ADDRESSES_PER_GROUP],
+            sorted(v6)[:MAX_ADDRESSES_PER_GROUP])
 
 
 def render_ruleset(groups: Iterable[dict], device_addresses: dict,
@@ -113,25 +150,27 @@ def render_ruleset(groups: Iterable[dict], device_addresses: dict,
         if not patterns and not group.get("quota_patterns"):
             continue
 
-        sources = []
+        owned = []
         for mac in group.get("device_macs") or []:
             for address in device_addresses.get(mac.upper(), []):
-                if _is_ipv4(address) and address not in sources:
-                    sources.append(address)
-        if not sources:
+                owned.append(address)
+        sources_v4, sources_v6 = _split_families(owned)
+        if not sources_v4 and not sources_v6:
             continue  # a list with no devices to apply it to blocks nothing
 
-        # A blacklist covers the whole service; a spent daily limit covers
-        # only its front door, so the two are resolved separately and then
-        # merged into one set.
+        # A blacklist covers the whole service, including the hosts an app
+        # streams from. A spent daily limit covers the service too, minus
+        # the hosts that serve content inside other people's pages, so an
+        # embedded video or a map on a shop's page keeps working.
         resolved = set(addresses_for_patterns(patterns, dns_cache, whole_service=True))
         resolved |= set(addresses_for_patterns(
-            group.get("quota_patterns") or [], dns_cache, whole_service=False))
-        destinations = sorted(a for a in resolved if _is_ipv4(a))[:MAX_ADDRESSES_PER_GROUP]
-        if not destinations:
+            group.get("quota_patterns") or [], dns_cache,
+            whole_service=True, exclude_embeds=True))
+        dest_v4, dest_v6 = _split_families(resolved)
+        if not dest_v4 and not dest_v6:
             continue  # nothing resolved yet; a rule with an empty set is noise
 
-        blocks.append((group, sorted(sources), destinations))
+        blocks.append((group, sources_v4, sources_v6, dest_v4, dest_v6))
 
     if not blocks:
         return None
@@ -146,15 +185,27 @@ def render_ruleset(groups: Iterable[dict], device_addresses: dict,
         f"add chain inet {TABLE} forward "
         "{ type filter hook forward priority -10 ; policy accept ; }",
     ]
-    for index, (group, sources, destinations) in enumerate(blocks):
-        name = f"blocked{index}"
-        lines.append(f"add set inet {TABLE} {name} {{ type ipv4_addr ; }}")
-        lines.append(f"add element inet {TABLE} {name} {{ {', '.join(destinations)} }}")
-        lines.append(
-            f"add rule inet {TABLE} forward "
-            f"ip saddr {{ {', '.join(sources)} }} ip daddr @{name} drop "
-            f"comment \"{group.get('username', 'group')}\""
-        )
+    for index, (group, sources_v4, sources_v6, dest_v4, dest_v6) in enumerate(blocks):
+        comment = group.get("username", "group")
+        # One set and one rule per family. An inet table carries both, but
+        # `ip saddr` never matches an IPv6 packet and `ip6 saddr` never
+        # matches an IPv4 one, so a single rule can only ever cover half the
+        # traffic.
+        for suffix, kind, sources, destinations in (
+            ("v4", "ipv4_addr", sources_v4, dest_v4),
+            ("v6", "ipv6_addr", sources_v6, dest_v6),
+        ):
+            if not sources or not destinations:
+                continue
+            name = f"blocked{index}{suffix}"
+            match = "ip" if suffix == "v4" else "ip6"
+            lines.append(f"add set inet {TABLE} {name} {{ type {kind} ; }}")
+            lines.append(f"add element inet {TABLE} {name} {{ {', '.join(destinations)} }}")
+            lines.append(
+                f"add rule inet {TABLE} forward "
+                f"{match} saddr {{ {', '.join(sources)} }} {match} daddr @{name} drop "
+                f"comment \"{comment}\""
+            )
     return "\n".join(lines) + "\n"
 
 
@@ -213,19 +264,26 @@ def exhausted_services(quotas: dict, used_seconds: dict) -> list:
 
 
 def quota_patterns(services: Iterable[str]) -> list:
-    """The domains to block for services that have run out of time.
+    """What to block for services that have run out of time.
 
-    Only front doors, so a limit on watching YouTube does not break a video
-    embedded in an article or a map on a shop's contact page. A service with
-    no known front door contributes nothing rather than being blocked
-    broadly: failing to enforce a limit is a much smaller harm than breaking
-    a page nobody meant to restrict.
+    Named services rather than bare domains, because a limit that only
+    blocked the front door left the app running: Instagram kept loading a
+    feed from its CDN while instagram.com sat blocked, so nothing a person
+    could see had changed. Resolution excludes embed hosts instead, which
+    protects a video in an article without protecting the app.
+
+    A service with no known front door contributes nothing rather than being
+    blocked broadly: failing to enforce a limit is a much smaller harm than
+    breaking a page nobody meant to restrict.
     """
+    from .accounts import SERVICE_PREFIX
     from .service_rules import blockable_domains
 
     patterns = []
     for service in services or []:
-        for domain in blockable_domains(service):
-            if domain not in patterns:
-                patterns.append(domain)
+        if not blockable_domains(service):
+            continue
+        entry = SERVICE_PREFIX + service
+        if entry not in patterns:
+            patterns.append(entry)
     return sorted(patterns)

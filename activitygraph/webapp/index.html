@@ -1725,11 +1725,28 @@ async function refreshLimits() {
   const panel = document.getElementById("limits-panel");
   const container = document.getElementById("limits");
   const note = document.getElementById("limits-note");
+  // A failed response used to be swallowed here. FastAPI reports an error
+  // as {detail: ...}, which has no `error` key, so the checks below passed,
+  // `quotas.is_admin` came back undefined, and an admin fell through to the
+  // personal branch and was shown an empty panel. The limits were there the
+  // whole time; nothing said otherwise.
+  async function load(url) {
+    const res = await fetch(url);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || data.detail || (url + " returned " + res.status));
+    return data;
+  }
+
   let quotas, blocked;
   try {
-    quotas = await (await fetch("/api/quotas")).json();
-    blocked = await (await fetch("/api/blacklist")).json();
+    quotas = await load("/api/quotas");
+    blocked = await load("/api/blacklist");
   } catch (err) {
+    panel.hidden = false;
+    container.innerHTML = "";
+    note.textContent = "unavailable";
+    container.appendChild(el("div", { class: "limit-warning" },
+      "Could not load limits and blocked sites: " + err.message));
     return;
   }
   if (quotas.error || blocked.error) return;
