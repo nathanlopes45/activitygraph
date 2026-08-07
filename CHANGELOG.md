@@ -26,6 +26,18 @@ Notable changes, newest first. Dates are when the work landed on `main`.
 
 ### Fixed
 
+- **The background thread died on a live gateway**, taking history
+  recording, flow closing and blacklist enforcement with it while the
+  dashboard carried on looking healthy. The firewall refresh iterated the
+  DNS cache that the capture thread writes to, so a device resolving a name
+  mid-refresh raised `dictionary changed size during iteration`. It now
+  works from a snapshot, and a failing pass no longer ends the loop.
+  `/api/health` reports failed passes.
+- **`--flow-accounting` reported no connection tracking on the one machine
+  it was written for.** Raspberry Pi OS builds its kernel without
+  `CONFIG_NF_CONNTRACK_PROCFS`, so `/proc/net/nf_conntrack` is absent even
+  while tracking runs and counts. It now falls back to `conntrack -L`, and
+  each failure names the command that fixes it.
 - **Blocking had no effect on a network with IPv6.** Every rule matched
   IPv4 only, and clients prefer IPv6 when both are offered, so the traffic
   took the family with no rules on it. Addresses were being resolved

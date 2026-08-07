@@ -92,7 +92,8 @@ def test_a_missing_table_is_not_fatal():
 def test_a_missing_table_and_an_uncounted_one_are_named_apart(tmp_path):
     """They look identical in the totals and need different fixes."""
     missing = accounting_status(str(tmp_path / "absent"))
-    assert missing[0] is False and "does not exist" in missing[1]
+    assert missing[0] is False
+    assert "conntrack" in missing[1], "the message should carry a command"
 
     uncounted = tmp_path / "nf_conntrack"
     uncounted.write_text(NO_ACCT_LINE + "\n")
@@ -106,6 +107,78 @@ def test_a_working_table_reports_how_many_flows(tmp_path):
     path.write_text("\n".join([TCP_LINE, UDP_LINE]) + "\n")
     available, message = accounting_status(str(path))
     assert available is True and "2" in message
+
+
+# ---------------- when the proc file does not exist ----------------
+
+# Raspberry Pi OS builds its kernel without CONFIG_NF_CONNTRACK_PROCFS, so
+# /proc/net/nf_conntrack is absent even while connection tracking runs and
+# counts. Its absence proves nothing on its own, and reporting "no
+# connection tracking on this machine" was wrong on the one machine this
+# feature exists for.
+
+# `conntrack -L` prints the same fields without the leading family columns.
+COMMAND_OUTPUT = (
+    "tcp      6 431996 ESTABLISHED src=192.168.50.50 dst=142.250.187.238 "
+    "sport=52134 dport=443 packets=27 bytes=4321 src=142.250.187.238 "
+    "dst=192.168.50.50 sport=443 dport=52134 packets=31 bytes=39812 "
+    "[ASSURED] mark=0 use=1\n"
+)
+
+
+def test_the_command_output_parses_the_same_way():
+    flow = parse_line(COMMAND_OUTPUT.strip())
+    assert flow.proto == "TCP"
+    assert flow.byte_count == 4321 and flow.reply_byte_count == 39812
+
+
+def test_the_command_is_used_when_the_file_is_absent(monkeypatch):
+    import activitygraph.flow_accounting as module
+
+    monkeypatch.setattr(module, "_read_command", lambda: COMMAND_OUTPUT)
+    flows = module.read_flows("/nonexistent/nf_conntrack")
+    assert len(flows) == 1 and flows[0].byte_count == 4321
+
+
+def test_the_file_is_preferred_when_present(tmp_path, monkeypatch):
+    """Reading a file needs no subprocess and no extra package, so the
+    fallback stays a fallback."""
+    import activitygraph.flow_accounting as module
+
+    called = []
+    monkeypatch.setattr(module, "_read_command",
+                        lambda: called.append(1) or COMMAND_OUTPUT)
+    path = tmp_path / "nf_conntrack"
+    path.write_text(UDP_LINE + "\n")
+
+    flows = module.read_flows(str(path))
+    assert called == [], "the command should not have been run"
+    assert flows[0].proto == "UDP"
+
+
+@pytest.mark.parametrize("tracking_loaded,expected", [
+    (True, "apt install -y conntrack"),
+    (False, "modprobe nf_conntrack"),
+])
+def test_an_unreadable_table_names_the_right_fix(monkeypatch, tracking_loaded, expected):
+    """Tracking running but unreadable, and tracking not loaded at all, look
+    identical in the byte totals and need different commands."""
+    import activitygraph.flow_accounting as module
+
+    monkeypatch.setattr(module, "_read_command", lambda: None)
+    monkeypatch.setattr(module.Path, "exists", lambda self: tracking_loaded)
+
+    available, message = module.accounting_status("/nonexistent/nf_conntrack")
+    assert available is False
+    assert expected in message
+
+
+def test_the_message_names_where_the_numbers_came_from(monkeypatch):
+    import activitygraph.flow_accounting as module
+
+    monkeypatch.setattr(module, "_read_command", lambda: COMMAND_OUTPUT)
+    available, message = module.accounting_status("/nonexistent/nf_conntrack")
+    assert available is True and "conntrack -L" in message
 
 
 # ---------------- folding it into the flows ----------------

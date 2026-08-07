@@ -30,6 +30,7 @@ reports rather than silently returning zeros.
 """
 from __future__ import annotations
 
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, Optional
@@ -131,6 +132,32 @@ def parse_line(line: str) -> Optional[ConntrackFlow]:
     )
 
 
+def _read_proc(path: str) -> Optional[str]:
+    try:
+        return Path(path).read_text(errors="ignore")
+    except OSError:
+        return None
+
+
+def _read_command() -> Optional[str]:
+    """The same table via `conntrack -L`.
+
+    /proc/net/nf_conntrack only exists when the kernel was built with
+    CONFIG_NF_CONNTRACK_PROCFS, and Raspberry Pi OS is one of the
+    distributions that leaves it out. Connection tracking is still running
+    and still counting; only the proc view is missing. The netlink interface
+    that `conntrack -L` uses is always there when the module is loaded, so
+    it is the fallback rather than the primary: reading a file needs no
+    subprocess and no extra package.
+    """
+    try:
+        result = subprocess.run(["conntrack", "-L"], capture_output=True,
+                                text=True, timeout=10)
+    except (FileNotFoundError, OSError, subprocess.SubprocessError):
+        return None
+    return result.stdout if result.stdout.strip() else None
+
+
 def read_flows(path: str = CONNTRACK_PATH) -> list[ConntrackFlow]:
     """Every tracked flow, or [] where conntrack is not available.
 
@@ -138,34 +165,51 @@ def read_flows(path: str = CONNTRACK_PATH) -> list[ConntrackFlow]:
     or a gateway with the module unloaded, loses exact counters and carries
     on with the ones observed from capture.
     """
-    try:
-        text = Path(path).read_text(errors="ignore")
-    except OSError:
+    text = _read_proc(path)
+    if text is None:
+        text = _read_command()
+    if text is None:
         return []
     return [flow for flow in (parse_line(line) for line in text.splitlines())
             if flow is not None]
 
 
-def accounting_status(path: str = CONNTRACK_PATH) -> tuple:
-    """(available, message). Says which of the two failures applies.
+ACCT_SYSCTL = "/proc/sys/net/netfilter/nf_conntrack_acct"
 
-    A missing table and a table without counters look identical from the
-    byte totals, and they need different fixes, so they are named apart.
+
+def accounting_status(path: str = CONNTRACK_PATH) -> tuple:
+    """(available, message). Says which failure applies, and its fix.
+
+    Every one of these looks identical from the byte totals, and each needs
+    a different command, so they are named apart rather than collapsed into
+    "not available".
     """
-    try:
-        text = Path(path).read_text(errors="ignore")
-    except FileNotFoundError:
-        return False, ("no connection tracking on this machine "
-                       f"({path} does not exist)")
-    except PermissionError:
-        return False, f"cannot read {path}; this needs to run as root"
-    except OSError as exc:
-        return False, f"cannot read {path}: {exc}"
+    source = "proc"
+    text = _read_proc(path)
+    if text is None:
+        text = _read_command()
+        source = "conntrack -L"
+
+    if text is None:
+        # Distinguish "tracking is off" from "there is no way to read it".
+        # The proc file is absent on Raspberry Pi OS even when tracking is
+        # running, because the kernel is built without CONNTRACK_PROCFS, so
+        # its absence alone proves nothing.
+        if Path(ACCT_SYSCTL).exists():
+            return False, ("connection tracking is running but cannot be read: "
+                           f"{path} does not exist on this kernel and the "
+                           "conntrack tool is not installed. Fix with: "
+                           "sudo apt install -y conntrack")
+        return False, ("connection tracking is not loaded, so there are no "
+                       "per-flow counters to read. On a gateway it loads with "
+                       "NAT; force it with: sudo modprobe nf_conntrack, and "
+                       "install the reader with: sudo apt install -y conntrack")
 
     lines = [line for line in text.splitlines() if line.strip()]
     if not lines:
-        return True, "connection tracking is on but no flows are open yet"
+        return True, f"connection tracking is on ({source}) but no flows are open yet"
     if not any("bytes=" in line for line in lines):
-        return False, ("connection tracking is on but not counting bytes; "
-                       "enable it with: sysctl -w net.netfilter.nf_conntrack_acct=1")
-    return True, f"counting {len(lines)} tracked flows"
+        return False, ("connection tracking is on but not counting bytes. "
+                       "Fix with: sudo sysctl -w net.netfilter.nf_conntrack_acct=1 "
+                       "(then restart, so existing flows are recounted)")
+    return True, f"counting {len(lines)} tracked flows via {source}"

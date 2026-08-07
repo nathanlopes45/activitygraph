@@ -660,9 +660,17 @@ sudo .venv/bin/python -m activitygraph.main \
   default:
 
   ```bash
+  sudo apt install -y conntrack
   sudo sysctl -w net.netfilter.nf_conntrack_acct=1
   echo 'net.netfilter.nf_conntrack_acct=1' | sudo tee /etc/sysctl.d/99-activitygraph.conf
   ```
+
+  `conntrack` is needed because Raspberry Pi OS builds its kernel without
+  `CONFIG_NF_CONNTRACK_PROCFS`, so `/proc/net/nf_conntrack` does not exist
+  here even though tracking is running and counting. The `conntrack` tool
+  reads the same table over netlink. If the startup warning says tracking is
+  not loaded at all rather than unreadable, `sudo modprobe nf_conntrack`
+  loads it, and NAT loads it on its own once traffic flows.
 
   Without it the service still runs and says so on startup, with sampled
   byte totals. `--capture-mode full` remains the alternative, at the

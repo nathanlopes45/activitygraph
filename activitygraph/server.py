@@ -511,6 +511,24 @@ def create_app(pipeline, live: bool = False, history_store=None, capture=None,
     return app
 
 
+def _snapshot(mapping: dict, attempts: int = 5) -> dict:
+    """A private copy of a dict another thread is writing to.
+
+    dict(d) is a single bytecode operation but not an atomic one: it can
+    still raise RuntimeError if the dict grows partway through the copy.
+    Retrying is enough, because the window is a few microseconds wide and
+    the writer is not in a loop. Returning a stale copy on the last attempt
+    beats raising: a refresh that misses one DNS answer corrects itself on
+    the next tick, whereas an exception here stops every periodic job.
+    """
+    for _ in range(attempts):
+        try:
+            return dict(mapping)
+        except RuntimeError:
+            continue
+    return {}
+
+
 def _nft_available() -> bool:
     """Whether the firewall tool exists at all. A laptop run has no nft, and
     the failure is otherwise indistinguishable from rules that do not match."""
@@ -687,6 +705,8 @@ class BackgroundCapture:
         self._enforcement: dict = {"enabled": enforce_blacklist, "applied": None,
                                    "message": "no refresh has run yet", "groups": []}
         self._capture_error: Optional[str] = None
+        self._flush_errors = 0
+        self._flush_error: Optional[str] = None
         self.flow_accounting = flow_accounting
         self._accounting = {"enabled": flow_accounting, "flows_updated": 0,
                             "message": "no poll has run yet"}
@@ -756,38 +776,58 @@ class BackgroundCapture:
             "capture_alive": self.capture_alive,
             "capture_restarts": self._capture_restarts,
             "last_capture_error": self._capture_error,
+            # A failing background pass means history and enforcement have
+            # stopped even though capture is fine, which otherwise reads as
+            # an idle network.
+            "flush_errors": self._flush_errors,
+            "last_flush_error": self._flush_error,
             # Byte totals are a sample without this, so a dashboard showing
             # exact-looking numbers should be able to say which it is.
             "flow_accounting": self.accounting_status(),
         }
 
     def _flush_loop(self) -> None:
+        # Every periodic job runs on this one thread: closing flows, writing
+        # history, learning names, refreshing the firewall. An exception used
+        # to end the thread, and the process carried on serving a dashboard
+        # that had quietly stopped recording anything and stopped enforcing
+        # anything, which looks like an idle network rather than a fault.
         while not self._stop_flag.is_set():
             time.sleep(self.flush_interval_seconds)
-            # Re-read leases so devices that joined after startup show up
-            # without a restart. Re-registering a known device just refreshes
-            # its last-seen time, and the file is tiny.
-            if self.dhcp_leases is not None:
-                from .dhcp_leases import ingest_leases
+            try:
+                self._flush_once()
+            except Exception as exc:
+                self._flush_errors += 1
+                self._flush_error = f"{type(exc).__name__}: {exc}"
+                print(f"[activitygraph] Warning: a background pass failed "
+                      f"({self._flush_error}). Continuing.", file=sys.stderr)
 
-                ingest_leases(self.pipeline, self.dhcp_leases or None, announce=False)
-            # Before flush_idle, so a flow the kernel says is still moving
-            # is not timed out on the same tick that proves it is alive.
-            self._poll_flow_accounting()
-            self.pipeline.flows.flush_idle()
-            for flow in self.pipeline.flows.closed_flows():
-                if flow.service is None:
-                    self.pipeline.services.apply(flow)
-            if self.history_store is not None:
-                self._record_closed_sessions()
-                # Intervals are keyed (device_ip, category, start_time) and
-                # extend on conflict, so recording an interval that is still
-                # growing is safe -- unlike sessions, which wait until closed.
-                self.history_store.record_time_from_pipeline(self.pipeline)
-                # Hostnames learned since the last tick, written here rather
-                # than per DNS answer to keep disk writes off the capture path.
-                self.pipeline.services.flush()
-            self._refresh_blacklist()
+    def _flush_once(self) -> None:
+        """One pass of the periodic work."""
+        # Re-read leases so devices that joined after startup show up
+        # without a restart. Re-registering a known device just refreshes
+        # its last-seen time, and the file is tiny.
+        if self.dhcp_leases is not None:
+            from .dhcp_leases import ingest_leases
+
+            ingest_leases(self.pipeline, self.dhcp_leases or None, announce=False)
+        # Before flush_idle, so a flow the kernel says is still moving
+        # is not timed out on the same tick that proves it is alive.
+        self._poll_flow_accounting()
+        self.pipeline.flows.flush_idle()
+        for flow in self.pipeline.flows.closed_flows():
+            if flow.service is None:
+                self.pipeline.services.apply(flow)
+        if self.history_store is not None:
+            self._record_closed_sessions()
+            # Intervals are keyed (device_ip, category, start_time) and
+            # extend on conflict, so recording an interval that is still
+            # growing is safe -- unlike sessions, which wait until closed.
+            self.history_store.record_time_from_pipeline(self.pipeline)
+            # Hostnames learned since the last tick, written here rather
+            # than per DNS answer to keep disk writes off the capture path.
+            self.pipeline.services.flush()
+        self._refresh_blacklist()
 
     def _poll_flow_accounting(self) -> None:
         """Fold the kernel's exact byte counters into the open flows.
@@ -850,7 +890,13 @@ class BackgroundCapture:
             # service. Merging them here would apply the wider rule to both.
             group["quota_patterns"] = quota_patterns(spent)
 
-        dns_cache = self.pipeline.services._dns_cache
+        # A snapshot, not the live dict. The capture thread adds an entry to
+        # it for every DNS answer it sees, and iterating it here raised
+        # "dictionary changed size during iteration" the moment a device
+        # looked something up mid-refresh. That killed this whole thread, so
+        # history, flow closing and enforcement all stopped together while
+        # the dashboard carried on looking healthy.
+        dns_cache = _snapshot(self.pipeline.services._dns_cache)
         script = render_ruleset(groups, addresses, dns_cache)
 
         # Recorded every tick, whether or not the ruleset changed. Blocking

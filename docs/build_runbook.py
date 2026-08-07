@@ -775,10 +775,14 @@ table([
      "them anyway, so reading that table every few seconds costs one pass "
      "over open connections rather than one pass over packets. It also fixes "
      "durations, because a flow whose counters moved is known to be alive "
-     "rather than inferred from a sampled packet. Counters are off by "
-     "default; turn them on with "
-     "<font face='Courier'>sysctl -w net.netfilter.nf_conntrack_acct=1</font>. "
-     "Without them the service still runs and says so at startup."],
+     "rather than inferred from a sampled packet. Needs two things on "
+     "Raspberry Pi OS, whose kernel is built without CONNTRACK_PROCFS so "
+     "/proc/net/nf_conntrack does not exist even while tracking runs: "
+     "<font face='Courier'>sudo apt install -y conntrack</font> to read the "
+     "table over netlink, and "
+     "<font face='Courier'>sudo sysctl -w net.netfilter.nf_conntrack_acct=1</font> "
+     "because the counters are off by default. Without either, the service "
+     "still runs and names the missing one at startup."],
     ["<font face='Courier'>--history-db</font>",
      "Records activity over time, and stores hostnames learned from DNS so "
      "the service breakdown survives a reboot. A durable record of what "
