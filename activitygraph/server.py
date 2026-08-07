@@ -22,6 +22,7 @@ for a loopback-only single-user run.
 from __future__ import annotations
 
 import ipaddress
+import math
 import sys
 import threading
 import time
@@ -40,6 +41,11 @@ WEBAPP_DIR = Path(__file__).parent / "webapp"
 # A filter is a convenience, not a query language. Capping the number of
 # values keeps a hand-written URL from turning one request into a long scan.
 MAX_FILTER_VALUES = 100
+
+# A daily limit longer than a day can never be reached, so anything above
+# this is a typo rather than an intention. The cap also keeps the value
+# inside the range SQLite will store as an integer.
+MAX_LIMIT_MINUTES = 24 * 60
 
 
 def _split_filter(raw: str, limit: int) -> list[str]:
@@ -288,13 +294,39 @@ def create_app(pipeline, live: bool = False, history_store=None, capture=None,
         user, which is what makes the admin view usable rather than
         read-only. Anyone else naming another user is refused rather than
         silently redirected to their own list.
+
+        The id an admin names has to be one that exists. SQLite does not
+        enforce a foreign key unless asked to, and this connection does not
+        ask, so an unknown id used to insert an orphan row: an entry no
+        group ever displays and no firewall rule ever applies, which looks
+        like blocking that silently does nothing. A float was worse still,
+        truncating onto a different real user's list.
         """
         requested = payload.get("user_id")
+        # Checked before the identity comparison below, because True == 1 in
+        # Python: a JSON true would otherwise resolve to whichever account
+        # happens to hold id 1, which is usually the admin.
+        if isinstance(requested, bool):
+            return None
         if requested in (None, "", user.id):
             return user.id
         if not user.is_admin:
             return None
-        return int(requested)
+        if not isinstance(requested, (int, str)):
+            return None
+        try:
+            target = int(str(requested).strip())
+        except ValueError:
+            return None
+        return target if accounts.get_user(target) is not None else None
+
+    def _no_target(user, noun: str) -> JSONResponse:
+        """Why the target was refused, without telling a non-admin whether
+        the user they named exists."""
+        if user.is_admin:
+            return JSONResponse({"error": "No such user."}, status_code=404)
+        return JSONResponse({"error": f"You can only change your own {noun}."},
+                            status_code=403)
 
     @app.post("/api/blacklist")
     def add_blacklist(request: Request, payload: dict = Body(...)):
@@ -303,8 +335,7 @@ def create_app(pipeline, live: bool = False, history_store=None, capture=None,
             return JSONResponse({"error": "Not signed in."}, status_code=401)
         target = _blacklist_target(user, payload)
         if target is None:
-            return JSONResponse({"error": "You can only change your own list."},
-                                status_code=403)
+            return _no_target(user, "list")
         try:
             stored = accounts.add_blocked(target, payload.get("pattern", ""))
         except AccountError as exc:
@@ -318,8 +349,7 @@ def create_app(pipeline, live: bool = False, history_store=None, capture=None,
             return JSONResponse({"error": "Not signed in."}, status_code=401)
         target = _blacklist_target(user, payload)
         if target is None:
-            return JSONResponse({"error": "You can only change your own list."},
-                                status_code=403)
+            return _no_target(user, "list")
         if not accounts.remove_blocked(target, payload.get("pattern", "")):
             return JSONResponse({"error": "That entry is not on the list."},
                                 status_code=404)
@@ -371,12 +401,18 @@ def create_app(pipeline, live: bool = False, history_store=None, capture=None,
             return JSONResponse({"error": "Not signed in."}, status_code=401)
         target = _blacklist_target(user, payload)
         if target is None:
-            return JSONResponse({"error": "You can only change your own limits."},
-                                status_code=403)
+            return _no_target(user, "limits")
         try:
             minutes = float(payload.get("minutes", 0))
         except (TypeError, ValueError):
             return JSONResponse({"error": "Give the limit in minutes."}, status_code=400)
+        # nan and inf survive float() and then fail on int(); a number past
+        # SQLite's integer range fails on the insert. All three reached the
+        # user as a 500 from typing something odd into a text box.
+        if not math.isfinite(minutes) or not 0 <= minutes <= MAX_LIMIT_MINUTES:
+            return JSONResponse(
+                {"error": f"Give the limit in minutes, from 0 to {MAX_LIMIT_MINUTES}."},
+                status_code=400)
         try:
             accounts.set_quota(target, payload.get("service", ""), int(minutes * 60))
         except AccountError as exc:

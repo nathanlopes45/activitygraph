@@ -71,10 +71,17 @@ def normalise_blocked_pattern(pattern: str) -> str:
     # "service:YouTube" into "service", which has no dot and is rejected as
     # not a domain, so the delete matched nothing and unblocking silently
     # did nothing at all.
-    if text.lower().startswith(SERVICE_PREFIX):
-        return SERVICE_PREFIX + text[len(SERVICE_PREFIX):].strip()
-
     from .service_rules import PRIMARY_DOMAINS
+
+    if text.lower().startswith(SERVICE_PREFIX):
+        name = text[len(SERVICE_PREFIX):].strip()
+        # Canonicalise the case as well as the prefix. Stored form is
+        # "service:YouTube", so passing "service:youtube" back matched no row
+        # and unblocking reported success while leaving the entry in place.
+        for service in PRIMARY_DOMAINS:
+            if name.lower() == service.lower():
+                return SERVICE_PREFIX + service
+        return SERVICE_PREFIX + name
 
     for service in PRIMARY_DOMAINS:
         if text.lower() == service.lower():
