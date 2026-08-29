@@ -1,0 +1,720 @@
+<title>ActivityGraph</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chivo:wght@400;600;700;900&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* ---- Tokens: light is the bare :root; dark overrides tokens only ---- */
+:root{
+  --bg:#e9ede9; --bg-2:#f3f6f3; --surface:#ffffff; --surface-2:#f1f5f2;
+  --ink:#0f1a1f; --ink-2:#38484f; --muted:#63757d; --line:#d7ded9; --line-2:#c4cec9;
+  --teal:#0c8f60; --teal-ink:#0c8f60; --violet:#6d51e0; --amber:#a76a12;
+  --shadow:0 1px 2px rgba(15,26,31,.05),0 8px 24px rgba(15,26,31,.06);
+  --grid:rgba(15,26,31,.05);
+  /* category colors (data) - fixed across themes, read on both grounds */
+  --c-ent:#8b5cf6; --c-dev:#0ea5e9; --c-soc:#ec4899; --c-game:#f59e0b;
+  --c-study:#10b981; --c-comm:#f43f5e; --c-prod:#6366f1; --c-shop:#f97316;
+  --c-news:#0891b2; --c-ai:#65a30d; --c-other:#94a3b8;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0a0f13; --bg-2:#0d141a; --surface:#121b22; --surface-2:#18242d;
+  --ink:#e7eef1; --ink-2:#b4c3cb; --muted:#7f929c; --line:#1f2e38; --line-2:#2a3c47;
+  --teal:#4fd1a6; --teal-ink:#4fd1a6; --violet:#a78bfa; --amber:#e6b45e;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 12px 32px rgba(0,0,0,.35);
+  --grid:rgba(255,255,255,.04);
+  --c-ent:#a78bfa; --c-dev:#38bdf8; --c-soc:#f472b6; --c-game:#fbbf24;
+  --c-study:#34d399; --c-comm:#fb7185; --c-prod:#818cf8; --c-shop:#fb923c;
+  --c-news:#22d3ee; --c-ai:#a3e635; --c-other:#94a3b8;
+}}
+:root[data-theme="dark"]{
+  --bg:#0a0f13; --bg-2:#0d141a; --surface:#121b22; --surface-2:#18242d;
+  --ink:#e7eef1; --ink-2:#b4c3cb; --muted:#7f929c; --line:#1f2e38; --line-2:#2a3c47;
+  --teal:#4fd1a6; --teal-ink:#4fd1a6; --violet:#a78bfa; --amber:#e6b45e;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 12px 32px rgba(0,0,0,.35);
+  --grid:rgba(255,255,255,.04);
+  --c-ent:#a78bfa; --c-dev:#38bdf8; --c-soc:#f472b6; --c-game:#fbbf24;
+  --c-study:#34d399; --c-comm:#fb7185; --c-prod:#818cf8; --c-shop:#fb923c;
+  --c-news:#22d3ee; --c-ai:#a3e635; --c-other:#94a3b8;
+}
+
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+body{
+  margin:0; background:var(--bg); color:var(--ink);
+  font-family:"IBM Plex Sans",system-ui,-apple-system,sans-serif;
+  font-size:16px; line-height:1.6; -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1080px; margin:0 auto; padding:0 24px}
+.mono{font-family:"IBM Plex Mono",ui-monospace,monospace}
+h1,h2,h3{font-family:"Chivo",system-ui,sans-serif; text-wrap:balance; margin:0}
+a{color:inherit}
+.eyebrow{font-family:"Chivo",sans-serif; font-weight:700; font-size:12px;
+  letter-spacing:.16em; text-transform:uppercase; color:var(--teal-ink)}
+.tnum{font-variant-numeric:tabular-nums}
+
+/* ---- top bar ---- */
+.top{position:sticky; top:0; z-index:50; backdrop-filter:blur(10px);
+  background:color-mix(in srgb, var(--bg) 82%, transparent);
+  border-bottom:1px solid var(--line)}
+.top .wrap{display:flex; align-items:center; gap:20px; height:60px}
+.brand{font-family:"Chivo",sans-serif; font-weight:900; letter-spacing:-.01em; font-size:18px}
+.brand b{color:var(--teal-ink)}
+.top nav{margin-left:auto; display:flex; gap:22px; font-size:14px; color:var(--muted)}
+.top nav a{text-decoration:none}
+.top nav a:hover{color:var(--ink)}
+.pill{display:inline-flex; align-items:center; gap:7px; font-family:"Chivo",sans-serif;
+  font-size:11px; font-weight:700; letter-spacing:.12em; text-transform:uppercase;
+  padding:5px 10px; border:1px solid var(--line-2); border-radius:999px; color:var(--muted)}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--teal);box-shadow:0 0 0 3px color-mix(in srgb,var(--teal) 25%,transparent)}
+@media (max-width:720px){.top nav{display:none}}
+
+/* ---- hero ---- */
+.hero{padding:74px 0 40px; position:relative; overflow:hidden}
+.hero::before{content:""; position:absolute; inset:0; z-index:0;
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:34px 34px; mask-image:radial-gradient(120% 90% at 70% 0%,#000 20%,transparent 72%)}
+.hero .wrap{position:relative; z-index:1}
+.hero h1{font-size:clamp(38px,6.4vw,68px); font-weight:900; line-height:1.02; letter-spacing:-.02em; margin:16px 0 0}
+.hero h1 em{font-style:normal; color:var(--teal-ink)}
+.lede{font-size:clamp(17px,2.2vw,21px); color:var(--ink-2); max-width:60ch; margin:20px 0 0}
+.hero .note{margin:22px 0 0; font-size:14px; color:var(--muted); max-width:64ch}
+.hero .note b{color:var(--ink-2); font-weight:600}
+
+/* readout strip */
+.readout{display:grid; grid-template-columns:repeat(5,1fr); gap:1px; margin:34px 0 0;
+  background:var(--line); border:1px solid var(--line); border-radius:14px; overflow:hidden}
+.readout .cell{background:var(--surface); padding:16px 18px}
+.readout .v{font-family:"Chivo",sans-serif; font-weight:800; font-size:clamp(20px,3vw,28px); letter-spacing:-.02em}
+.readout .k{font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); margin-top:3px}
+@media (max-width:720px){.readout{grid-template-columns:repeat(2,1fr)} .readout .cell:last-child{grid-column:1/-1}}
+
+/* ---- section frame ---- */
+section{padding:56px 0; border-top:1px solid var(--line)}
+.shead{display:flex; align-items:baseline; gap:16px; flex-wrap:wrap; margin-bottom:28px}
+.shead h2{font-size:clamp(24px,3.4vw,34px); font-weight:800; letter-spacing:-.02em}
+.shead p{color:var(--muted); font-size:15px; max-width:52ch; margin:0}
+.lead{color:var(--ink-2); max-width:66ch; margin:0 0 8px}
+
+/* ---- pipeline rail ---- */
+.rail{display:grid; grid-template-columns:repeat(2,1fr); gap:14px}
+@media (min-width:900px){.rail{grid-template-columns:repeat(4,1fr)}}
+.stage{background:var(--surface); border:1px solid var(--line); border-radius:14px;
+  padding:18px; box-shadow:var(--shadow); position:relative; overflow:hidden}
+.stage .num{font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--teal-ink); font-weight:600}
+.stage h3{font-size:16px; font-weight:700; margin:8px 0 4px; letter-spacing:-.01em}
+.stage .file{font-family:"IBM Plex Mono",monospace; font-size:11px; color:var(--muted)}
+.stage p{font-size:13.5px; color:var(--ink-2); margin:10px 0 12px; line-height:1.5}
+.stage .out{font-size:11px; color:var(--muted); border-top:1px dashed var(--line-2); padding-top:9px}
+.stage .out b{font-family:"IBM Plex Mono",monospace; color:var(--ink); font-weight:500; font-size:12px}
+.stage.hl{border-color:color-mix(in srgb,var(--teal) 55%,var(--line))}
+.stage.hl::after{content:""; position:absolute; left:0; top:0; bottom:0; width:3px; background:var(--teal)}
+
+/* ---- trace ---- */
+.trace{display:flex; flex-direction:column; gap:0}
+.tstep{display:grid; grid-template-columns:44px 1fr; gap:0}
+.trail{position:relative; display:flex; justify-content:center}
+.trail::before{content:""; width:2px; background:var(--line-2); flex:0 0 2px}
+.tstep:first-child .trail::before{margin-top:22px}
+.tstep:last-child .trail::before{margin-bottom:calc(100% - 22px)}
+.tbead{position:absolute; top:14px; width:14px; height:14px; border-radius:50%;
+  background:var(--surface); border:2px solid var(--teal); box-shadow:0 0 0 4px var(--bg)}
+.tcard{background:var(--surface); border:1px solid var(--line); border-radius:12px;
+  padding:16px 18px; margin:0 0 16px; box-shadow:var(--shadow)}
+.tcard .st{display:flex; align-items:baseline; gap:10px; flex-wrap:wrap}
+.tcard .st .lbl{font-family:"Chivo",sans-serif; font-weight:700; font-size:15px}
+.tcard .st .who{font-family:"IBM Plex Mono",monospace; font-size:11px; color:var(--muted)}
+.tcard .desc{font-size:13.5px; color:var(--ink-2); margin:6px 0 12px}
+.readbox{background:var(--surface-2); border:1px solid var(--line); border-radius:9px;
+  padding:12px 14px; font-family:"IBM Plex Mono",monospace; font-size:12.5px; line-height:1.7;
+  overflow-x:auto}
+.readbox .kk{color:var(--muted)}
+.readbox .vv{color:var(--ink)}
+.readbox .hh{color:var(--teal-ink); font-weight:600}
+.readbox .drop{color:var(--amber)}
+.chip{display:inline-block; font-family:"Chivo",sans-serif; font-weight:700; font-size:11px;
+  letter-spacing:.04em; padding:3px 9px; border-radius:6px; color:#fff}
+
+/* ---- generic cards ---- */
+.grid2{display:grid; grid-template-columns:1fr; gap:20px}
+@media (min-width:860px){.grid2{grid-template-columns:1.15fr .85fr}}
+.panel{background:var(--surface); border:1px solid var(--line); border-radius:16px;
+  padding:22px; box-shadow:var(--shadow)}
+.panel h3{font-size:13px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--muted)}
+.panel .sub{font-size:12px; color:var(--muted); font-weight:400; text-transform:none; letter-spacing:0}
+
+/* time bars */
+.bars{display:flex; flex-direction:column; gap:2px; margin-top:14px}
+.barrow{border-radius:8px; padding:7px 8px; cursor:default}
+.barrow.exp{cursor:pointer}
+.barrow:hover{background:var(--surface-2)}
+.barrow .line{display:flex; align-items:center; gap:10px}
+.barrow .cat{flex:0 0 auto; font-size:14px; display:flex; align-items:center; gap:8px; min-width:150px}
+.swatch{width:9px;height:9px;border-radius:2px;flex:0 0 auto}
+.track{flex:1; height:9px; background:var(--surface-2); border-radius:999px; overflow:hidden}
+.fill{height:100%; border-radius:999px}
+.barrow .val{flex:0 0 auto; font-family:"IBM Plex Mono",monospace; font-size:12.5px; color:var(--ink-2); min-width:56px; text-align:right}
+.subwrap{display:none; padding:6px 0 4px 26px}
+.barrow.open + .subwrap{display:block}
+.subrow{display:flex; align-items:center; gap:10px; padding:3px 0; font-size:12.5px; color:var(--muted)}
+.subrow .nm{min-width:134px}
+.subrow .track{height:6px}
+.subrow .val{font-family:"IBM Plex Mono",monospace; min-width:46px; text-align:right}
+.hint{font-size:11.5px; color:var(--muted); margin-top:12px}
+
+/* person cards */
+.people{display:grid; grid-template-columns:1fr 1fr; gap:12px}
+@media (max-width:560px){.people{grid-template-columns:1fr}}
+.person{background:var(--surface-2); border:1px solid var(--line); border-radius:12px; padding:14px 16px}
+.person .nm{font-family:"Chivo",sans-serif; font-weight:700; font-size:15px}
+.person .big{font-family:"Chivo",sans-serif; font-weight:800; font-size:26px; letter-spacing:-.02em; margin-top:2px}
+.person .meta{font-size:11.5px; color:var(--muted); margin-top:1px}
+.person .cats{margin-top:10px; display:flex; flex-direction:column; gap:5px}
+.person .cbar{display:flex; align-items:center; gap:7px; font-size:11.5px; color:var(--ink-2)}
+.person .cbar .track{height:6px}
+.callout{margin-top:16px; border-left:3px solid var(--violet); background:var(--surface-2);
+  padding:12px 14px; border-radius:0 10px 10px 0; font-size:13px; color:var(--ink-2)}
+.callout b{color:var(--ink)}
+
+/* activity graph */
+.graphbox{overflow:auto; border:1px solid var(--line); border-radius:14px; background:var(--surface);
+  box-shadow:var(--shadow); max-height:560px}
+.graphhead{display:flex; gap:24px; padding:12px 16px 0; font-family:"Chivo",sans-serif;
+  font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--muted)}
+svg text{font-family:"IBM Plex Mono",monospace}
+
+/* history */
+.histbox{margin-top:2px}
+.histchart{width:100%; height:220px; display:block}
+.legend{display:flex; flex-wrap:wrap; gap:12px; margin-top:14px; font-size:12px; color:var(--muted)}
+.legend span{display:inline-flex; align-items:center; gap:6px}
+.deltas{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin-top:8px}
+.delta{background:var(--surface-2); border:1px solid var(--line); border-radius:11px; padding:12px 14px}
+.delta .c{font-size:13px; font-weight:600; display:flex; align-items:center; gap:7px}
+.delta .n{font-family:"Chivo",sans-serif; font-weight:800; font-size:20px; margin-top:4px}
+.delta .d{font-family:"IBM Plex Mono",monospace; font-size:12px; margin-top:1px}
+.up{color:var(--amber)} .down{color:var(--teal-ink)}
+
+/* background segregation */
+.split{display:grid; grid-template-columns:1fr; gap:16px}
+@media (min-width:820px){.split{grid-template-columns:1fr 1fr}}
+.bgstat{display:flex; gap:22px; align-items:center; flex-wrap:wrap}
+.bgstat .big{font-family:"Chivo",sans-serif; font-weight:900; font-size:40px; letter-spacing:-.02em; color:var(--amber)}
+.tags{display:flex; flex-wrap:wrap; gap:8px; margin-top:12px}
+.tag{font-family:"IBM Plex Mono",monospace; font-size:12px; padding:4px 10px; border-radius:7px;
+  background:var(--surface-2); border:1px solid var(--line); color:var(--ink-2)}
+
+/* devices table */
+.dev{display:grid; grid-template-columns:1fr; gap:8px; margin-top:8px}
+.devrow{display:grid; grid-template-columns:1.4fr 1fr 1fr .8fr; gap:10px; align-items:center;
+  padding:9px 12px; border:1px solid var(--line); border-radius:10px; background:var(--surface); font-size:13px}
+.devrow .n{font-weight:600}
+.devrow .m{font-family:"IBM Plex Mono",monospace; font-size:11.5px; color:var(--muted)}
+.devrow .g{font-family:"Chivo",sans-serif; font-weight:700; font-size:11px; letter-spacing:.03em;
+  padding:2px 8px; border-radius:6px; justify-self:start}
+@media (max-width:640px){.devrow{grid-template-columns:1fr 1fr; row-gap:4px}.devrow .m{grid-column:1/-1}}
+
+/* principles */
+.princ{display:grid; grid-template-columns:1fr; gap:14px}
+@media (min-width:760px){.princ{grid-template-columns:1fr 1fr}}
+.pr{background:var(--surface); border:1px solid var(--line); border-radius:13px; padding:18px 20px; box-shadow:var(--shadow)}
+.pr h3{font-size:16px; font-weight:700; display:flex; align-items:center; gap:9px}
+.pr .ic{width:22px;height:22px;flex:0 0 auto;color:var(--teal-ink)}
+.pr p{font-size:13.5px; color:var(--ink-2); margin:8px 0 0}
+
+/* run it */
+.cmd{background:#0a0f13; color:#e7eef1; border:1px solid var(--line-2); border-radius:12px;
+  padding:16px 18px; font-family:"IBM Plex Mono",monospace; font-size:13px; overflow-x:auto; box-shadow:var(--shadow)}
+:root[data-theme="light"] .cmd, :root:not([data-theme="dark"]) .cmd{}
+.cmd .pr{color:#4fd1a6; background:none; border:0; padding:0; box-shadow:none; display:inline}
+.cmd .cm{color:#7f929c}
+.runcols{display:grid; grid-template-columns:1fr; gap:18px}
+@media (min-width:820px){.runcols{grid-template-columns:1.1fr .9fr}}
+
+footer{border-top:1px solid var(--line); padding:34px 0 60px; color:var(--muted); font-size:13px}
+footer .wrap{display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap}
+
+.reveal{opacity:0; transform:translateY(14px); transition:opacity .6s ease, transform .6s ease}
+.reveal.in{opacity:1; transform:none}
+@media (prefers-reduced-motion:reduce){.reveal{opacity:1; transform:none; transition:none}}
+</style>
+
+<div class="top"><div class="wrap">
+  <div class="brand">Activity<b>Graph</b></div>
+  <nav>
+    <a href="#pipeline">Pipeline</a>
+    <a href="#trace">Trace</a>
+    <a href="#dashboard">Dashboard</a>
+    <a href="#privacy">Privacy</a>
+    <a href="#run">Run it</a>
+  </nav>
+  <span class="pill"><span class="dot"></span>Demo data</span>
+</div></div>
+
+<header class="hero"><div class="wrap">
+  <div class="eyebrow">Local-first network intelligence</div>
+  <h1>Where did the time go, <em>per person</em>, across every screen in the house?</h1>
+  <p class="lede">ActivityGraph turns the traffic already flowing across your own network into an
+    answer to that question — devices, services, and time by category — without a single packet
+    of it leaving the machine.</p>
+  <p class="note"><b>This page is the demo, running.</b> Every figure below was computed by the
+    real pipeline from one synthetic household's evening of traffic — the same code path a live
+    capture uses. Nothing here is hand-typed; the numbers are what the software actually produced.</p>
+  <div class="readout" id="readout"></div>
+</div></header>
+
+<section id="pipeline"><div class="wrap">
+  <div class="shead">
+    <div class="eyebrow" style="flex:1 0 100%">The mechanism</div>
+    <h2>Seven stages, raw packets to understood time</h2>
+    <p>Each stage consumes what the last produced. Nothing reaches across the pipeline; a new
+      dashboard panel is scoped automatically because it reads the same shapes.</p>
+  </div>
+  <div class="rail" id="rail"></div>
+</div></section>
+
+<section id="trace"><div class="wrap">
+  <div class="shead">
+    <div class="eyebrow" style="flex:1 0 100%">Follow one packet</div>
+    <h2>A TLS handshake becomes an hour of the family's evening</h2>
+    <p>The real flow the demo picked out as its example, shown as each stage actually transformed
+      it — the values are read straight back from the pipeline's output.</p>
+  </div>
+  <div class="trace" id="trace"></div>
+</div></section>
+
+<section id="dashboard"><div class="wrap">
+  <div class="shead">
+    <div class="eyebrow" style="flex:1 0 100%">Read the dashboard</div>
+    <h2>What the household did this evening</h2>
+    <p>The panels the live dashboard renders, drawn here from the same computed data.</p>
+  </div>
+
+  <div class="grid2">
+    <div class="panel">
+      <h3>Where the time went <span class="sub">— click a row to break it down</span></h3>
+      <div class="bars" id="catbars"></div>
+      <p class="hint">Time is a <b>union of intervals</b>, not a sum: a category's total can never
+        exceed the wall-clock time a device was on, and every level is the union of the one below it.</p>
+    </div>
+    <div class="panel">
+      <h3>Time by person <span class="sub">— devices grouped together</span></h3>
+      <div class="people" id="people"></div>
+      <div class="callout" id="unioncallout"></div>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-top:20px">
+    <h3>Activity graph <span class="sub">— device → session → service, the tree the whole thing is named for</span></h3>
+    <div class="graphhead"><span style="flex:0 0 30%">Device</span><span style="flex:0 0 38%">Session</span><span>Service</span></div>
+    <div class="graphbox"><div id="graph"></div></div>
+  </div>
+
+  <div class="grid2" style="margin-top:20px">
+    <div class="panel">
+      <h3>Last 30 days <span class="sub">— active time per category per day</span></h3>
+      <div class="histbox"><svg class="histchart" id="hist" preserveAspectRatio="none"></svg></div>
+      <div class="legend" id="histlegend"></div>
+    </div>
+    <div class="panel">
+      <h3>Today vs. your average <span class="sub">— the wellbeing view</span></h3>
+      <div class="deltas" id="deltas"></div>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-top:20px">
+    <h3>Traffic nobody chose to generate <span class="sub">— kept out of the headline</span></h3>
+    <div class="split" style="margin-top:14px">
+      <div>
+        <div class="bgstat">
+          <div class="big" id="bgflows">—</div>
+          <div style="color:var(--ink-2); font-size:14px; max-width:34ch">
+            background flows — DNS lookups, clock sync, OS update checks, ad and analytics beacons —
+            <b style="color:var(--ink)">segregated</b> so they can't be mistaken for time a person spent.
+          </div>
+        </div>
+        <div class="tags" id="bgtags"></div>
+      </div>
+      <div>
+        <h3 style="margin-bottom:10px">The devices it found</h3>
+        <div class="dev" id="devices"></div>
+      </div>
+    </div>
+  </div>
+</div></section>
+
+<section id="privacy"><div class="wrap">
+  <div class="shead">
+    <div class="eyebrow" style="flex:1 0 100%">Principles</div>
+    <h2>Privacy isn't a setting here — it's the architecture</h2>
+    <p>The design choices that make the whole thing safe to point at your own household.</p>
+  </div>
+  <div class="princ">
+    <div class="pr"><h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l8 4v6c0 5-3.5 8-8 10-4.5-2-8-5-8-10V6z"/></svg>No payload is ever stored</h3>
+      <p>Only 5-tuple flow metadata and the DNS / TLS-SNI hostname already visible in transit — read
+        in the clear, no decryption, no content. What you watched is a category, never a URL history.</p></div>
+    <div class="pr"><h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12h16M12 4v16"/><circle cx="12" cy="12" r="9"/></svg>No external calls, by default</h3>
+      <p>MAC-vendor lookup uses a bundled offline table — there is no "what site is this IP" service.
+        Active probing (ARP sweep, name resolution) is opt-in, every one of it.</p></div>
+    <div class="pr"><h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 12l3 3 5-6"/></svg>The AI stays on the box</h3>
+      <p>The long-tail classifier talks to a local Ollama model on <span class="mono">localhost</span>,
+        only for domains the rules missed, and <b>fails open</b> to "Uncategorized" rather than reaching
+        for a cloud API.</p></div>
+    <div class="pr"><h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>Honest time math</h3>
+      <p>Overlapping activity counts once. A phone and a laptop both streaming 10:00–10:30 is 30
+        minutes of a person's life, not 60 device-minutes — both figures reported, neither invented.</p></div>
+  </div>
+</div></section>
+
+<section id="run"><div class="wrap">
+  <div class="shead">
+    <div class="eyebrow" style="flex:1 0 100%">See it live</div>
+    <h2>Run the real dashboard in one command</h2>
+    <p>This page is a static readout; the launcher below serves the interactive dashboard on your own
+      machine — same data, real filters, drill-downs and the live activity graph.</p>
+  </div>
+  <div class="runcols">
+    <div>
+      <div class="cmd"><span class="cm"># from the repo root, inside the venv</span><br>
+        .venv\Scripts\python.exe demo\serve_demo.py<br><br>
+        <span class="cm"># then open</span> http://127.0.0.1:8420</div>
+      <p class="hint">Windows PowerShell shown. On macOS / Linux use
+        <span class="mono">.venv/bin/python demo/serve_demo.py</span>. No root, no real capture —
+        the synthetic household runs through the shipping pipeline and server.</p>
+    </div>
+    <div class="panel">
+      <h3>What's under the hood</h3>
+      <p style="font-size:14px;color:var(--ink-2);margin:10px 0 0">
+        Python · FastAPI · a dependency-free single-page frontend · SQLite for history ·
+        <span class="mono">scapy</span> for live capture · a pluggable local-LLM fallback.
+        The demo adds only its synthetic input; every stage that processes it ships in the project.</p>
+    </div>
+  </div>
+</div></section>
+
+<footer><div class="wrap">
+  <span>ActivityGraph — understand your digital life. Local-first; no data leaves the device.</span>
+  <span id="genat"></span>
+</div></footer>
+
+<script id="ag-data" type="application/json">__DATA_JSON__</script>
+<script>
+const DATA = JSON.parse(document.getElementById('ag-data').textContent);
+
+// ---- helpers ----
+const CAT_COLOR = {
+  "Entertainment":"--c-ent","Software Development":"--c-dev","Social Media":"--c-soc",
+  "Gaming":"--c-game","Study":"--c-study","Communication":"--c-comm","Productivity":"--c-prod",
+  "Shopping":"--c-shop","News":"--c-news","AI Assistants":"--c-ai"
+};
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const catColor = c => css(CAT_COLOR[c] || "--c-other");
+function fmtDur(sec){
+  sec=Math.round(sec); if(sec<=0)return "0m";
+  if(sec<60)return sec+"s";
+  let m=Math.floor(sec/60), h=Math.floor(m/60); m=m%60;
+  return h ? (m?`${h}h ${m}m`:`${h}h`) : `${m}m`;
+}
+function fmtBytes(n){
+  if(!n)return "0 B"; const u=["B","KB","MB","GB"]; let i=0,s=n;
+  while(s>=1024&&i<u.length-1){s/=1024;i++} return (i===0?s.toFixed(0):s.toFixed(1))+" "+u[i];
+}
+const el=(t,c,h)=>{const e=document.createElement(t); if(c)e.className=c; if(h!=null)e.innerHTML=h; return e;};
+
+// ---- readout ----
+(function(){
+  const t=DATA.totals;
+  const cells=[
+    [fmtDur(t.active_seconds),"active wall-clock"],
+    [t.device_count,"devices"],
+    [t.session_count,"sessions"],
+    [t.flow_count,"flows"],
+    [t.service_count,"services seen"]
+  ];
+  const r=document.getElementById('readout');
+  cells.forEach(([v,k])=>{const c=el('div','cell'); c.append(el('div','v tnum',v), el('div','k',k)); r.append(c);});
+})();
+
+// ---- pipeline rail ----
+(function(){
+  const stages=[
+    ["01","Traffic Collector","collector.py","Reads packets off the wire and keeps only metadata already visible in transit — DNS queries, the TLS SNI hostname (cleartext), device names devices broadcast.","Packet — no payload"],
+    ["02","Device Identification","device_id.py","Builds an IP ↔ MAC ↔ vendor table from ARP, names each device from an alias, a broadcast hostname, or an offline OUI table.","Device — named, vendored"],
+    ["03","Flow Processor","flow_processor.py","Aggregates packets sharing a 5-tuple into one flow, tracking bytes, packet counts and the time window it spanned.","Flow — 5-tuple + counters"],
+    ["04","Service Detection","service_rules.py","Matches the hostname against domain rules — canvas → Study, googlevideo → YouTube — falling back to well-known ports.","Flow.service + .category"],
+    ["05","AI Classification","llm_classifier.py","The long-tail fallback: a local LLM classifies domains the rules missed. Fails open to Uncategorized — never a cloud call.","category for the unknown"],
+    ["06","Activity Graph","activity_graph.py","Folds a device's nearby flows into named Sessions, labelled by dominant category — the tree the project is named for.","Session per device"],
+    ["07","Analytics & Dashboard","server.py","Ranks usage, unions time per category and per person, records history, and serves it all locally.","the readout you're reading"]
+  ];
+  const rail=document.getElementById('rail');
+  stages.forEach(([n,name,file,desc,out],i)=>{
+    const s=el('div','stage'+(i===0?' hl':''));
+    s.append(el('div','num',n));
+    s.append(el('h3',null,name));
+    s.append(el('div','file',file));
+    s.append(el('p',null,desc));
+    s.append(el('div','out',`→ produces <b>${out}</b>`));
+    rail.append(s);
+  });
+})();
+
+// ---- trace ----
+(function(){
+  const tr=DATA.trace; if(!tr){return;}
+  const f=tr.flow, d=tr.device, s=tr.session;
+  const host=f.domain, svc=f.service, cat=f.category, catc=catColor(cat);
+  const steps=[
+    {lbl:"Traffic Collector", who:"collector.py → Packet",
+     desc:"A TLS ClientHello crosses the wire. We read the parts that are already in the clear and drop everything else — no handshake is decrypted, no byte of video is kept.",
+     rows:[["proto","TCP",0],["src → dst",`${f.src_ip} → ${f.dst_ip}:${f.dst_port}`,0],
+           ["tls_sni",host,1],["payload","(discarded)",2]]},
+    {lbl:"Device Identification", who:"device_id.py → Device",
+     desc:`The source address resolves to a known device. Its MAC prefix identifies the vendor from an offline table; the alias is the name someone gave it.`,
+     rows:[["ip",d.ip,0],["mac",d.mac,0],["vendor",d.vendor,1],["name",d.display_name,1],["group",d.group,1]]},
+    {lbl:"Flow Processor", who:"flow_processor.py → Flow",
+     desc:"Every packet on this 5-tuple folds into one flow. Its start and end become the real time window; the bytes accumulate.",
+     rows:[["packets",f.packet_count.toLocaleString(),0],["bytes",fmtBytes(f.byte_count),0],
+           ["duration",fmtDur(f.duration_seconds),0]]},
+    {lbl:"Service Detection", who:"service_rules.py",
+     desc:`The hostname matches a content-delivery rule — this is where the bytes of a stream actually come from — so the flow is tagged.`,
+     rows:[["host",host,1],["service",svc,3],["category",cat,3]]},
+    {lbl:"Activity Graph & time", who:"activity_graph.py + time_analytics.py",
+     desc:`It joins ${d.display_name}'s nearby flows into one “${s?s.title:cat+' Session'}”, and its minutes land in ${cat} — attributed to the ${d.group} group, unioned so overlaps count once.`,
+     rows:[["session",s?s.title:cat+" Session",3],["window",s?`${s.start_time.slice(11,16)}–${s.end_time.slice(11,16)}`:"—",0],
+           ["counts as",fmtDur(f.duration_seconds)+" of "+cat,3]]}
+  ];
+  const wrap=document.getElementById('trace');
+  steps.forEach(step=>{
+    const st=el('div','tstep');
+    const trail=el('div','trail'); trail.append(el('div','tbead')); st.append(trail);
+    const card=el('div','tcard');
+    const head=el('div','st'); head.append(el('span','lbl',step.lbl), el('span','who',step.who)); card.append(head);
+    card.append(el('div','desc',step.desc));
+    const box=el('div','readbox');
+    step.rows.forEach(([k,v,kind])=>{
+      let cls = kind===1?'hh':kind===2?'drop':'vv';
+      let val = v;
+      if(kind===3){ val=`<span class="chip" style="background:${catc}">${v}</span>`; cls='vv'; }
+      box.append(el('div',null,`<span class="kk">${k.padEnd(10,' ')}</span> <span class="${cls}">${val}</span>`));
+    });
+    card.append(box); st.append(card); wrap.append(st);
+  });
+})();
+
+// ---- category time bars ----
+(function(){
+  const rows=DATA.by_category; const max=Math.max(...rows.map(r=>r.seconds));
+  const box=document.getElementById('catbars');
+  rows.forEach(r=>{
+    const c=catColor(r.category); const hasSub=r.subcategories && r.subcategories.length;
+    const row=el('div','barrow'+(hasSub?' exp':''));
+    row.innerHTML=`<div class="line">
+      <div class="cat"><span class="swatch" style="background:${c}"></span>${r.category}${hasSub?' <span style="color:var(--muted);font-size:11px">▸</span>':''}</div>
+      <div class="track"><div class="fill" style="width:${Math.max(2,r.seconds/max*100)}%;background:${c}"></div></div>
+      <div class="val tnum">${fmtDur(r.seconds)}</div></div>`;
+    box.append(row);
+    const sw=el('div','subwrap');
+    (r.subcategories||[]).forEach(sub=>{
+      const smax=r.seconds;
+      const sr=el('div','subrow');
+      sr.innerHTML=`<span class="nm">${sub.subcategory}</span>
+        <div class="track"><div class="fill" style="width:${Math.max(3,sub.seconds/smax*100)}%;background:${c};opacity:.7"></div></div>
+        <span class="val tnum">${fmtDur(sub.seconds)}</span>`;
+      sw.append(sr);
+    });
+    box.append(sw);
+    if(hasSub){
+      row.addEventListener('click',()=>{
+        const open=row.classList.toggle('open');
+        const arrow=row.querySelector('.cat span:last-child');
+        if(arrow) arrow.textContent = open?'▾':'▸';
+      });
+    }
+  });
+})();
+
+// ---- people ----
+(function(){
+  const groups=DATA.by_group.slice().sort((a,b)=>b.seconds-a.seconds);
+  const box=document.getElementById('people');
+  const gmax=Math.max(...groups.map(g=>g.seconds));
+  groups.forEach(g=>{
+    const p=el('div','person');
+    p.append(el('div','nm',g.group));
+    p.append(el('div','big tnum',fmtDur(g.seconds)));
+    p.append(el('div','meta',`${g.device_count} device${g.device_count>1?'s':''} · ${fmtDur(g.device_seconds)} device-time`));
+    const cats=el('div','cats');
+    g.by_category.slice(0,3).forEach(c=>{
+      const cc=catColor(c.category);
+      const row=el('div','cbar');
+      row.innerHTML=`<span class="swatch" style="background:${cc}"></span><span style="flex:0 0 96px">${c.category}</span>
+        <div class="track"><div class="fill" style="width:${Math.max(4,c.seconds/gmax*100)}%;background:${cc}"></div></div>
+        <span class="mono" style="font-size:11px">${fmtDur(c.seconds)}</span>`;
+      cats.append(row);
+    });
+    p.append(cats); box.append(p);
+  });
+  // union callout: find the group where union < device_seconds the most
+  let best=null;
+  groups.forEach(g=>{ const gap=g.device_seconds-g.seconds; if(gap>0 && (!best||gap>best.gap)) best={g,gap}; });
+  if(best){
+    document.getElementById('unioncallout').innerHTML =
+      `<b>${best.g.group}</b> spent <b>${fmtDur(best.g.seconds)}</b> — not ${fmtDur(best.g.device_seconds)}. `+
+      `Two devices were often in use at once; the overlap counts once, so this is real time, not device-time.`;
+  }
+})();
+
+// ---- activity graph (device → session → service) ----
+(function(){
+  const devices=DATA.devices, sessions=DATA.sessions;
+  const ipName={}; devices.forEach(d=>ipName[d.ip]=d.name);
+  // order devices, then sessions grouped by device, then unique services
+  const devList=devices.map(d=>d.ip);
+  const sess=sessions.slice().sort((a,b)=>devList.indexOf(a.device_ip)-devList.indexOf(b.device_ip));
+  const services=[]; sess.forEach(s=>s.services.forEach(v=>{if(!services.includes(v))services.push(v);}));
+  const rowH=26, padTop=14, colW=[0,0,0];
+  const nRows=Math.max(devices.length, sess.length, services.length);
+  const H=padTop*2 + nRows*rowH + 10;
+  const W=760;
+  const xDev=14, xSes=W*0.34, xSvc=W*0.72;
+  const yOf=(i,n)=> padTop + (H-2*padTop)*( (i+0.5)/n );
+  const devY={}, sesY={}, svcY={};
+  devices.forEach((d,i)=>devY[d.ip]=yOf(i,devices.length));
+  sess.forEach((s,i)=>sesY[i]=yOf(i,sess.length));
+  services.forEach((v,i)=>svcY[v]=yOf(i,services.length));
+  const NS="http://www.w3.org/2000/svg";
+  const svg=document.createElementNS(NS,"svg");
+  svg.setAttribute("viewBox",`0 0 ${W} ${H}`); svg.setAttribute("width",W); svg.setAttribute("height",H);
+  const line=css('--line-2'), muted=css('--muted'), ink=css('--ink');
+  function path(x1,y1,x2,y2,stroke,op){
+    const p=document.createElementNS(NS,"path");
+    const mx=(x1+x2)/2;
+    p.setAttribute("d",`M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`);
+    p.setAttribute("fill","none"); p.setAttribute("stroke",stroke);
+    p.setAttribute("stroke-width","1.4"); p.setAttribute("opacity",op); svg.append(p);
+  }
+  // links
+  sess.forEach((s,i)=>{
+    const cc=catColor(s.category);
+    path(xDev+120, devY[s.device_ip], xSes-6, sesY[i], cc, .5);
+    s.services.forEach(v=>path(xSes+150, sesY[i], xSvc-6, svcY[v], cc, .38));
+  });
+  function node(x,y,label,color,sub){
+    const c=document.createElementNS(NS,"circle");
+    c.setAttribute("cx",x);c.setAttribute("cy",y);c.setAttribute("r","4");
+    c.setAttribute("fill",color||css('--surface'));c.setAttribute("stroke",color||muted);c.setAttribute("stroke-width","1.5");svg.append(c);
+    const t=document.createElementNS(NS,"text");
+    t.setAttribute("x",x+9);t.setAttribute("y",y+3.5);t.setAttribute("font-size","11.5");t.setAttribute("fill",ink);
+    t.textContent=label; svg.append(t);
+    if(sub){const st=document.createElementNS(NS,"text");
+      st.setAttribute("x",x+9);st.setAttribute("y",y+3.5);st.setAttribute("font-size","11.5");st.setAttribute("fill",muted);
+      st.setAttribute("text-anchor","end");st.setAttribute("dx", (xSes-40)+"");st.textContent=sub;}
+  }
+  const PGROUP={}; // person color by device
+  const gcolors=[css('--c-study'),css('--c-dev'),css('--c-soc'),css('--c-shop')];
+  const seenG=[]; devices.forEach(d=>{if(!seenG.includes(d.group))seenG.push(d.group);});
+  devices.forEach(d=>node(xDev,devY[d.ip], d.name, gcolors[seenG.indexOf(d.group)%gcolors.length]));
+  sess.forEach((s,i)=>node(xSes,sesY[i], `${s.title.replace(' Session','')} · ${s.start}`, catColor(s.category)));
+  services.forEach(v=>node(xSvc,svcY[v], v, null));
+  document.getElementById('graph').append(svg);
+})();
+
+// ---- history stacked bars ----
+(function(){
+  const rows=DATA.history.daily_time_totals;
+  const days=[...new Set(rows.map(r=>r.day))].sort();
+  const cats=[...new Set(rows.map(r=>r.category))];
+  // top categories by total, cap for legend clarity
+  const totals={}; rows.forEach(r=>totals[r.category]=(totals[r.category]||0)+r.seconds);
+  const topCats=Object.keys(totals).sort((a,b)=>totals[b]-totals[a]).slice(0,6);
+  const byDay={}; days.forEach(d=>byDay[d]={});
+  rows.forEach(r=>{const cat = topCats.includes(r.category)?r.category:"Other";
+    byDay[r.day][cat]=(byDay[r.day][cat]||0)+r.seconds;});
+  const order=[...topCats,"Other"];
+  const dayMax=Math.max(...days.map(d=>order.reduce((s,c)=>s+(byDay[d][c]||0),0)));
+  const W=760,H=220,padB=18,padT=8,padL=4,padR=4;
+  const svg=document.getElementById('hist'); svg.setAttribute("viewBox",`0 0 ${W} ${H}`);
+  const NS="http://www.w3.org/2000/svg";
+  const bw=(W-padL-padR)/days.length;
+  days.forEach((d,i)=>{
+    let y=H-padB;
+    const x=padL+i*bw;
+    order.forEach(c=>{
+      const v=byDay[d][c]||0; if(!v)return;
+      const h=(v/dayMax)*(H-padB-padT);
+      const rect=document.createElementNS(NS,"rect");
+      rect.setAttribute("x",x+bw*0.14);rect.setAttribute("width",bw*0.72);
+      rect.setAttribute("y",y-h);rect.setAttribute("height",h);
+      rect.setAttribute("fill", c==="Other"?css('--c-other'):catColor(c));
+      rect.setAttribute("opacity", i===days.length-1?"1":".82");
+      svg.append(rect); y-=h;
+    });
+  });
+  // baseline + "today" marker
+  const base=document.createElementNS(NS,"line");
+  base.setAttribute("x1",padL);base.setAttribute("x2",W-padR);base.setAttribute("y1",H-padB);base.setAttribute("y2",H-padB);
+  base.setAttribute("stroke",css('--line-2'));svg.append(base);
+  // labels: first + last day
+  function lab(x,txt,anchor){const t=document.createElementNS(NS,"text");
+    t.setAttribute("x",x);t.setAttribute("y",H-6);t.setAttribute("font-size","10");t.setAttribute("fill",css('--muted'));
+    t.setAttribute("text-anchor",anchor);t.textContent=txt;svg.append(t);}
+  const fmtDay=d=>{const m=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    const p=d.split('-'); return +p[2]+" "+m[+p[1]-1];};
+  lab(padL, fmtDay(days[0]), "start");
+  lab(W-padR, "today", "end");
+  // legend
+  const leg=document.getElementById('histlegend');
+  order.forEach(c=>{const s=el('span',null,`<span class="swatch" style="background:${c==='Other'?css('--c-other'):catColor(c)}"></span>${c}`); leg.append(s);});
+})();
+
+// ---- today vs average ----
+(function(){
+  const tv=DATA.history.today_vs_average_time;
+  const items=Object.entries(tv).map(([cat,v])=>({cat,...v}))
+    .filter(v=>v.today_seconds>0 || v.average_seconds>0)
+    .sort((a,b)=>b.today_seconds-a.today_seconds).slice(0,6);
+  const box=document.getElementById('deltas');
+  items.forEach(v=>{
+    const pct = v.average_seconds>0 ? Math.round((v.today_seconds-v.average_seconds)/v.average_seconds*100) : (v.today_seconds>0?100:0);
+    const up = pct>=0;
+    const d=el('div','delta');
+    d.innerHTML=`<div class="c"><span class="swatch" style="background:${catColor(v.cat)}"></span>${v.cat}</div>
+      <div class="n tnum">${fmtDur(v.today_seconds)}</div>
+      <div class="d ${up?'up':'down'}">${up?'▲':'▼'} ${up?'+':''}${pct}% vs ${fmtDur(v.average_seconds)} avg</div>`;
+    box.append(d);
+  });
+})();
+
+// ---- background + devices ----
+(function(){
+  const bg=DATA.background;
+  document.getElementById('bgflows').textContent=bg.flow_count;
+  const tags=document.getElementById('bgtags');
+  (bg.categories||[]).forEach(c=>tags.append(el('span','tag',c)));
+  tags.append(el('span','tag',fmtBytes(bg.byte_count)+" total"));
+
+  const dev=document.getElementById('devices');
+  const gcol={};const gc=[css('--c-study'),css('--c-dev'),css('--c-soc'),css('--c-shop')];
+  const seen=[]; DATA.devices.forEach(d=>{if(!seen.includes(d.group))seen.push(d.group);});
+  DATA.devices.forEach(d=>{
+    const col=gc[seen.indexOf(d.group)%gc.length];
+    const row=el('div','devrow');
+    row.innerHTML=`<span class="n">${d.name}</span>
+      <span class="m">${d.vendor}</span>
+      <span class="m">${d.mac}</span>
+      <span class="g" style="color:${col};background:color-mix(in srgb,${col} 16%,transparent)">${d.group}</span>`;
+    dev.append(row);
+  });
+})();
+
+// ---- gen date + reveal ----
+(function(){
+  const dt=new Date(DATA.generated_at);
+  document.getElementById('genat').textContent =
+    "generated "+dt.toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'});
+  const io=new IntersectionObserver((es)=>es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target);}}),{threshold:.12});
+  document.querySelectorAll('section .shead, .panel, .stage, .tstep, .pr').forEach((n,i)=>{
+    n.classList.add('reveal'); io.observe(n);
+  });
+})();
+</script>

@@ -1,0 +1,7 @@
+# Regenerable pipeline exports (rebuilt by export_demo.py / extract_artifact_data.py).
+# The built explainer.html is committed; these intermediates are not.
+demo_data.json
+artifact_data.json
+
+# Python cache
+__pycache__/
