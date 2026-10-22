@@ -11,6 +11,7 @@
 *.jpg binary
 *.ico binary
 *.db binary
+*.mp4 binary
 
 # Shell scripts must keep LF even in a Windows working copy. This project is
 # edited on Windows and copied to a Linux gateway with scp, so a CRLF line

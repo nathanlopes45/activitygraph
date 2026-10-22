@@ -16,6 +16,19 @@ It runs entirely on hardware you control, most usefully on a Raspberry Pi
 acting as your network's gateway, where every device's traffic passes through
 it. Nothing leaves the machine.
 
+## Watch the overview
+
+[![A narrated 2 minute 22 second overview of ActivityGraph: the problem it
+solves, what the dashboard shows, the hardware and software it runs on, and
+the commands to set it
+up](docs/images/video-poster.jpg)](https://github.com/nathanlopes45/activitygraph/raw/main/docs/video/activitygraph-overview.mp4)
+
+What the problem is, how ActivityGraph answers it, the Raspberry Pi gateway
+setup, and the commands to get it running
+([docs/video/activitygraph-overview.mp4](docs/video/activitygraph-overview.mp4)).
+Music: "Soft Corporate" by MusicLFiles, licensed
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+
 ![The ActivityGraph dashboard signed in as the admin: a collapsed filter, the
 device this browser is on, and every group's daily limits and blocked sites,
 with Instagram already blocked for the day in two of
