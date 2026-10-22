@@ -21,7 +21,7 @@ it. Nothing leaves the machine.
 [![A narrated 2 minute 22 second overview of ActivityGraph: the problem it
 solves, what the dashboard shows, the hardware and software it runs on, and
 the commands to set it
-up](docs/images/video-poster.jpg)](https://github.com/nathanlopes45/activitygraph/raw/main/docs/video/activitygraph-overview.mp4)
+up](docs/images/video-poster.jpg)](https://cdn.jsdelivr.net/gh/nathanlopes45/activitygraph@main/docs/video/activitygraph-overview.mp4)
 
 What the problem is, how ActivityGraph answers it, the Raspberry Pi gateway
 setup, and the commands to get it running
